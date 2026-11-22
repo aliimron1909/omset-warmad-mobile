@@ -24,10 +24,19 @@
   asli. Detail lengkap ada di [`docs/BUILD_RELEASE.md`](BUILD_RELEASE.md).
 - Workflow GitHub Actions sudah disiapkan: `.github/workflows/build-release.yml`.
 
+## Build rilis v5.0.1 (perbaikan layar hitam)
+- Build dijalankan di GitHub Actions `ubuntu-latest` (x86_64 native, Flutter 3.50.1).
+- APK: `Omset-WarMad-v5.0.1-arm64-release.apk` (19 MB, arm64-v8a, v2+v3 signed).
+- SHA-256 APK: `550070e31975ac2b1b5b5138a354008d63fa89f47e455b961681c5ebbfcf8604`.
+- SHA-256 signer: `9C:94:A7:4A:2E:73:A1:B0:C9:F2:33:02:75:83:76:B0:4B:99:0B:DC:6B:74:DF:91:84:E2:FC:AE:86:7C:2D:47`
+  (sama dengan `assetlinks.json`).
+- Verifikasi `libapp.so`: `product ... arm64 android compressed-pointers` — sudah
+  kompatibel dengan VM Android (penyebab layar hitam v5.0.0 teratasi).
+- `zipalign -c -v 4` sukses.
+
 ## Sedang dikerjakan
-- Build ulang v5.0.1 di runner x86_64 (butuh akses repository GitHub / mesin x86_64).
-- Setelah APK baru jadi: pasang ulang di Poco F7 dan cek logcat tidak ada
-  `CreateRootIsolate failed`.
+- Uji pasang ulang v5.0.1 di Poco F7 Android 16; pastikan logcat tidak memuat
+  `CreateRootIsolate failed` dan UI tampil.
 
 ## Masih tertunda (sesuai rencana 3–5 bulan)
 - Fase 2: Drift/SQLite, `WorkManager` sync otomatis, notifikasi tutup aplikasi.
