@@ -16,6 +16,8 @@ String _addD(String dt, int n) => _iso(_parse(dt).add(Duration(days: n)));
 int _diffD(String a, String b) =>
     _parse(b).difference(_parse(a)).inDays.round();
 
+int diffD(String a, String b) => _diffD(a, b);
+
 /// Periode satu siklus untuk tanggal [dt] dengan tanggal serah [d].
 ({String s, String e}) periodOf(String dt, int d) {
   final parts = dt.split('-').map(int.parse).toList();
