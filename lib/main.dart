@@ -1080,6 +1080,87 @@ class _InputTabState extends State<InputTab> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Catatan dihapus')));
   }
 
+  int _lastCycle(WarungData w) {
+    if (w.records.isEmpty) return 1;
+    return w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b);
+  }
+
+  Future<void> _newCycle(WarungData w) async {
+    final lc = _lastCycle(w);
+    final cnt = w.records.where((r) => r.cycle == lc).length;
+    if (cnt < 30) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Siklus Baru'),
+          content: Text(cnt > 0
+              ? 'Siklus $lc baru $cnt hari (belum 30 hari). Yakin ingin memulai siklus baru?'
+              : 'Siklus $lc masih kosong (belum ada catatan). Yakin ingin membuat siklus baru?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Buat Siklus Baru')),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    final c = lc + 1;
+    final prevMode = w.jagaModes[lc] ?? w.settings.defMode;
+    w.jagaModes[c] = prevMode;
+    if (w.cycleNames[lc] != null) w.cycleNames[c] = Map<String, String>.from(w.cycleNames[lc]!);
+    if (w.cyclePenjaga[lc] != null) {
+      final prev = w.cyclePenjaga[lc]!;
+      w.cyclePenjaga[c] = CustomGuards(pp: prev.pp, list: prev.list.map((g) => Guard(n: g.n, t: g.t, g: g.g)).toList());
+    }
+    await widget.onSaved();
+    if (!mounted) return;
+    _syncCycleDay(w, _date);
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Siklus $c dibuat')));
+  }
+
+  bool _canDeleteCycle(WarungData w, int c) {
+    if (w.records.any((r) => r.cycle == c)) return false;
+    final prev = w.records.map((r) => r.cycle).where((x) => x < c).fold<int?>(null, (p, x) => p == null || x > p ? x : p);
+    if (prev == null) return false;
+    final prevCnt = w.records.where((r) => r.cycle == prev).length;
+    return prevCnt < 30;
+  }
+
+  Future<void> _deleteCycle(WarungData w, int c) async {
+    if (w.records.any((r) => r.cycle == c)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Siklus ini sudah berisi catatan')));
+      return;
+    }
+    final prev = w.records.map((r) => r.cycle).where((x) => x < c).fold<int?>(null, (p, x) => p == null || x > p ? x : p);
+    if (prev == null || w.records.where((r) => r.cycle == prev).length >= 30) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Siklus sebelumnya sudah 30 hari, siklus tidak bisa dihapus')));
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Hapus Siklus $c?'),
+        content: Text('Hapus Siklus $c yang masih kosong? Mode dan nama karyawan siklus ini ikut terhapus.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Hapus Siklus')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    w.jagaModes.remove(c);
+    w.kontrakOptions.remove(c);
+    w.cycleNames.remove(c);
+    w.cycleStok.remove(c);
+    w.cyclePenjaga.remove(c);
+    await widget.onSaved();
+    if (!mounted) return;
+    _syncCycleDay(w, _date);
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Siklus $c dihapus')));
+  }
+
   Widget _recentTile(WarungData w, OmRecord r) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -1121,6 +1202,8 @@ class _InputTabState extends State<InputTab> {
     final existing = w.records.where((r) => r.date == _date && r.date != _editDate).toList();
     final miss = _missingDates(w, cycle);
     final preview = _parseRp(_omsetCtrl.text) * w.settings.pct / 100;
+    final lc = _lastCycle(w);
+    final canDel = _canDeleteCycle(w, lc);
     final runningCycle = cycleOfDate(_today(), w.settings.cr) ??
         (w.records.isEmpty ? 1 : w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b));
     final recent = w.records.where((r) => r.cycle == runningCycle).toList()
@@ -1265,6 +1348,25 @@ class _InputTabState extends State<InputTab> {
                     child: Text('Siklus $cycle: ${sp.s} s/d ${sp.e} (${sp.len} hari). Otomatis mengikuti tanggal, bisa diedit.',
                         style: const TextStyle(fontSize: 12, color: Color(0xFF0F5C4D))),
                   ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () => _newCycle(w),
+                      icon: const Icon(Icons.add_circle_outline),
+                      label: const Text('Siklus Baru'),
+                    ),
+                    if (canDel)
+                      OutlinedButton.icon(
+                        onPressed: () => _deleteCycle(w, lc),
+                        icon: const Icon(Icons.delete_outline, color: Color(0xFFC0392B)),
+                        label: Text('Hapus Siklus $lc (kosong)', style: const TextStyle(color: Color(0xFFC0392B))),
+                        style: OutlinedButton.styleFrom(side: const BorderSide(color: Color(0xFFC0392B))),
+                      ),
+                  ],
+                ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _omsetCtrl,
