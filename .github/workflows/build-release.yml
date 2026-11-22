@@ -25,7 +25,7 @@ jobs:
       - name: Setup Android SDK + NDK 28.2.13676358
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-35 build-tools;35.0.0 ndk;28.2.13676358'
+          packages: 'platforms;android-36 build-tools;36.0.0 ndk;28.2.13676358'
 
       - name: Setup Flutter 3.50.1 (x86_64 native)
         uses: subosito/flutter-action@v2
@@ -62,7 +62,7 @@ jobs:
 
       - name: Verify APK
         env:
-          BUILD_TOOLS: ${{ env.ANDROID_SDK_ROOT }}/build-tools/35.0.0
+          BUILD_TOOLS: ${{ env.ANDROID_SDK_ROOT }}/build-tools/36.0.0
         run: |
           set -euo pipefail
           APK=build/app/outputs/flutter-apk/app-release.apk

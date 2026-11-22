@@ -14,9 +14,7 @@ plugins {
 
 android {
     namespace = "com.rffamily.warmad"
-    // SDK 35 dan build-tools 35.0.0 sudah terpasang; hindari pemanggilan sdkmanager
-    // oleh plugin Flutter karena sdkmanager crash di lingkungan ini.
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = "28.2.13676358"
 
     compileOptions {
@@ -27,7 +25,7 @@ android {
     defaultConfig {
         applicationId = "com.rffamily.warmad"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
