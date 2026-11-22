@@ -861,8 +861,24 @@ class _InputTabState extends State<InputTab> {
       return;
     }
 
-    final cycle = int.tryParse(_cycleCtrl.text.trim()) ?? (cycleOfDate(_date, w.settings.cr) ?? 1);
-    final day = (int.tryParse(_dayCtrl.text.trim()) ?? 1).clamp(1, 31);
+    final ac = cycleOfDate(_date, w.settings.cr);
+    int cycle;
+    int day;
+    if (ac != null) {
+      cycle = ac;
+      final sp = cycSpan(ac, w.settings.cr);
+      day = sp == null ? 1 : (diffD(sp.s, _date) + 1).clamp(1, 31);
+    } else if (_editDate != null) {
+      final old = w.records.firstWhere((r) => r.date == _editDate,
+          orElse: () => OmRecord(date: _date, cycle: 1, day: 1, omset: 0));
+      cycle = old.cycle;
+      day = old.day.clamp(1, 31);
+    } else {
+      final maxCycle = w.records.isEmpty ? 1 : w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b);
+      cycle = maxCycle;
+      final inC = w.records.where((r) => r.cycle == cycle).length;
+      day = (inC + 1).clamp(1, 31);
+    }
 
     final rec = OmRecord(
       date: _date,
@@ -901,6 +917,30 @@ class _InputTabState extends State<InputTab> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Catatan dihapus')));
   }
 
+  Widget _recentTile(WarungData w, OmRecord r) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        leading: CircleAvatar(
+          radius: 16,
+          backgroundColor: const Color(0xFFE6F2EF),
+          child: Text('${r.day}', style: const TextStyle(fontSize: 12, color: Color(0xFF0F5C4D), fontWeight: FontWeight.bold)),
+        ),
+        title: Text(r.date, style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Text('${_dayName(r.date)} · Siklus ${r.cycle}${r.expense.isNotEmpty ? ' · ${r.expense}' : ''}'),
+        trailing: Wrap(
+          spacing: 0,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(widget.rupiah(r.omset), style: const TextStyle(fontWeight: FontWeight.bold)),
+            IconButton(icon: const Icon(Icons.edit, size: 20), onPressed: () => _loadForEdit(w, r)),
+            IconButton(icon: const Icon(Icons.delete_outline, size: 20), onPressed: () => _delete(w, r.date)),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final st = widget.state;
@@ -909,20 +949,31 @@ class _InputTabState extends State<InputTab> {
       return const Center(child: Text('Belum ada warung. Sinkronkan dulu dari Dashboard.'));
     }
 
-    if (_cycleCtrl.text.isEmpty || _dayCtrl.text.isEmpty) _syncCycleDay(w, _date);
-
     final ac = cycleOfDate(_date, w.settings.cr);
     final auto = ac != null;
     final sp = auto ? cycSpan(ac!, w.settings.cr) : null;
-    final cycle = int.tryParse(_cycleCtrl.text.trim()) ?? (auto ? ac! : 1);
-    final day = int.tryParse(_dayCtrl.text.trim()) ?? 1;
+    int cycle;
+    int day;
+    if (auto) {
+      cycle = ac!;
+      day = sp == null ? 1 : (diffD(sp.s, _date) + 1).clamp(1, 31);
+    } else if (_editDate != null) {
+      final oldRec = w.records.firstWhere((r) => r.date == _editDate,
+          orElse: () => OmRecord(date: _date, cycle: 1, day: 1, omset: 0));
+      cycle = oldRec.cycle;
+      day = oldRec.day.clamp(1, 31);
+    } else {
+      final maxCycle = w.records.isEmpty ? 1 : w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b);
+      cycle = maxCycle;
+      final inC = w.records.where((r) => r.cycle == cycle).length;
+      day = (inC + 1).clamp(1, 31);
+    }
     final existing = w.records.where((r) => r.date == _date && r.date != _editDate).toList();
     final miss = _missingDates(w, cycle);
     final preview = _parseRp(_omsetCtrl.text) * w.settings.pct / 100;
     final runningCycle = cycleOfDate(_today(), w.settings.cr) ?? 1;
     final recent = w.records.where((r) => r.cycle == runningCycle).toList()
       ..sort((a, b) => b.date.compareTo(a.date));
-    final recentShown = recent.take(10).toList();
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -1033,24 +1084,22 @@ class _InputTabState extends State<InputTab> {
                 Row(
                   children: [
                     Expanded(
-                      child: TextField(
-                        controller: _cycleCtrl,
-                        keyboardType: TextInputType.number,
+                      child: InputDecorator(
                         decoration: InputDecoration(
                           labelText: 'Siklus Ke-',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
+                        child: Text('$cycle'),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: TextField(
-                        controller: _dayCtrl,
-                        keyboardType: TextInputType.number,
+                      child: InputDecorator(
                         decoration: InputDecoration(
                           labelText: 'Hari Ke-${auto && sp != null ? ' (1–${sp.len})' : ''}',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
+                        child: Text('$day'),
                       ),
                     ),
                   ],
@@ -1058,7 +1107,7 @@ class _InputTabState extends State<InputTab> {
                 if (auto && sp != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
-                    child: Text('Siklus ${_cycleCtrl.text}: ${sp.s} s/d ${sp.e} (${sp.len} hari). Otomatis mengikuti tanggal, bisa diedit.',
+                    child: Text('Siklus $cycle: ${sp.s} s/d ${sp.e} (${sp.len} hari). Otomatis mengikuti tanggal.',
                         style: const TextStyle(fontSize: 12, color: Color(0xFF0F5C4D))),
                   ),
                 const SizedBox(height: 12),
@@ -1112,46 +1161,44 @@ class _InputTabState extends State<InputTab> {
         const SizedBox(height: 16),
         Card(
           clipBehavior: Clip.antiAlias,
-          child: ExpansionTile(
-            initiallyExpanded: true,
-            title: Text('Riwayat Terbaru · Siklus $runningCycle',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            subtitle: Text('${recent.length} catatan, tampil 10 hari terakhir'),
-            childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            children: [
-              if (recentShown.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(12),
-                  child: Text('Belum ada catatan omset pada siklus berjalan.'),
+          child: recent.length > 10
+              ? ExpansionTile(
+                  initiallyExpanded: true,
+                  title: Text('Riwayat Terbaru · Siklus $runningCycle',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  subtitle: Text('${recent.length} catatan'),
+                  childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  children: [
+                    if (recent.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: Text('Belum ada catatan omset pada siklus berjalan.'),
+                      )
+                    else
+                      ...recent.map((r) => _recentTile(w, r)),
+                  ],
                 )
-              else
-                ...recentShown.asMap().entries.map((e) {
-                  final i = e.key + 1;
-                  final r = e.value;
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        radius: 16,
-                        backgroundColor: const Color(0xFFE6F2EF),
-                        child: Text('$i', style: const TextStyle(fontSize: 12, color: Color(0xFF0F5C4D), fontWeight: FontWeight.bold)),
+              : Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text('Riwayat Terbaru · Siklus $runningCycle',
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        subtitle: Text('${recent.length} catatan'),
                       ),
-                      title: Text(r.date, style: const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: Text('${_dayName(r.date)} · Siklus ${r.cycle}${r.expense.isNotEmpty ? ' · ${r.expense}' : ''}'),
-                      trailing: Wrap(
-                        spacing: 0,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          Text(widget.rupiah(r.omset), style: const TextStyle(fontWeight: FontWeight.bold)),
-                          IconButton(icon: const Icon(Icons.edit, size: 20), onPressed: () => _loadForEdit(w, r)),
-                          IconButton(icon: const Icon(Icons.delete_outline, size: 20), onPressed: () => _delete(w, r.date)),
-                        ],
-                      ),
-                    ),
-                  );
-                }),
-            ],
-          ),
+                      if (recent.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: Text('Belum ada catatan omset pada siklus berjalan.'),
+                        )
+                      else
+                        ...recent.map((r) => _recentTile(w, r)),
+                    ],
+                  ),
+                ),
         ),
       ],
     );
