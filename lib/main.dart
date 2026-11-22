@@ -1,3 +1,4 @@
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import 'data/api.dart';
@@ -326,8 +327,13 @@ class _HomePageState extends State<HomePage> {
     double boss = 0, bs = 0, kt = 0, sb = 0, omset = 0, tab = 0, sel = 0;
     var nst = 0;
     var anyBagi = false;
+    final guardAgg = <String, _GuardAgg>{};
+    final daily = <String, double>{};
+    final perCycle = <int, double>{};
+
     for (final w in st.warung) {
-      for (final c in _cyclesFor(w, today)) {
+      final selected = _cyclesFor(w, today);
+      for (final c in selected) {
         final x = calc(
           c,
           records: w.records,
@@ -350,8 +356,37 @@ class _HomePageState extends State<HomePage> {
           sel += x.stok!.sel;
           nst++;
         }
+        for (final g in x.guards) {
+          final a = guardAgg.putIfAbsent(g.n, () => _GuardAgg(g.n));
+          a.base += g.base;
+          a.stk += g.stk;
+          a.types.add(g.t);
+        }
+      }
+      for (final r in w.records) {
+        if (selected.contains(r.cycle)) {
+          daily[r.date] = (daily[r.date] ?? 0) + r.omset;
+        }
       }
     }
+    for (final c in allCycles) {
+      double cOmset = 0;
+      for (final w in st.warung) {
+        cOmset += calc(
+          c,
+          records: w.records,
+          s: w.settings,
+          jm: w.jagaModes,
+          cn: w.cycleNames,
+          pg: w.cyclePenjaga,
+          ko: w.kontrakOptions,
+          sk: w.cycleStok,
+          today: today,
+        ).omset;
+      }
+      perCycle[c] = cOmset;
+    }
+    final dailyDates = daily.keys.toList()..sort();
 
     final cycleItems = <DropdownMenuItem<String>>[
       const DropdownMenuItem(value: 'running', child: Text('Siklus berjalan')),
@@ -438,6 +473,28 @@ class _HomePageState extends State<HomePage> {
                 valueColor: sel >= 0 ? const Color(0xFF1F9D55) : const Color(0xFFC0392B),
               ),
             ],
+            if (guardAgg.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text('Pendapatan Karyawan',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              ...guardAgg.values.map((g) => _GuardCard(agg: g, rupiah: _rupiah, nst: nst)),
+            ],
+            const SizedBox(height: 12),
+            _ChartCard(
+              title: 'Omset Harian',
+              child: _DailyChart(dates: dailyDates, values: daily, rupiah: _rupiah),
+            ),
+            const SizedBox(height: 8),
+            _ChartCard(
+              title: 'Omset Per-Siklus',
+              child: st.premium
+                  ? _CycleChart(cycles: allCycles, values: perCycle, rupiah: _rupiah)
+                  : const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Text('Grafik perbandingan per siklus khusus Premium.'),
+                    ),
+            ),
             const SizedBox(height: 16),
             Text('Rekap warung · $selLabel',
                 style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
@@ -626,6 +683,224 @@ class _WarungCard extends StatelessWidget {
               style: const TextStyle(color: Colors.grey, fontSize: 12),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+
+class _GuardAgg {
+  _GuardAgg(this.name);
+  final String name;
+  double base = 0;
+  double stk = 0;
+  final Set<String> types = {};
+  double get total => base + stk;
+}
+
+class _GuardCard extends StatelessWidget {
+  const _GuardCard({required this.agg, required this.rupiah, required this.nst});
+  final _GuardAgg agg;
+  final String Function(num) rupiah;
+  final int nst;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = agg.total;
+    final typeLabel = agg.types.length > 1
+        ? 'Gaji & bagi hasil'
+        : (agg.types.contains('gaji') ? 'Gaji' : 'Bagi hasil');
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(agg.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text(rupiah(t),
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: t < 0 ? const Color(0xFFC0392B) : null,
+                    )),
+              ],
+            ),
+            Text(
+              '$typeLabel ${rupiah(agg.base)}${nst > 0 ? ' ${agg.stk < 0 ? '-' : '+'} Stok ${rupiah(agg.stk.abs())}' : ''}',
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            if (t < 0)
+              Text('Kurang bayar ke pemilik ${rupiah(-t)}',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFFC0392B))),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChartCard extends StatelessWidget {
+  const _ChartCard({required this.title, required this.child});
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            SizedBox(height: 220, child: child),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DailyChart extends StatelessWidget {
+  const _DailyChart({required this.dates, required this.values, required this.rupiah});
+  final List<String> dates;
+  final Map<String, double> values;
+  final String Function(num) rupiah;
+
+  @override
+  Widget build(BuildContext context) {
+    if (dates.isEmpty) return const Center(child: Text('Belum ada data omset harian'));
+    final spots = <FlSpot>[];
+    for (var i = 0; i < dates.length; i++) {
+      spots.add(FlSpot(i.toDouble(), (values[dates[i]] ?? 0) / 1000.0));
+    }
+    final maxY = spots.map((s) => s.y).fold<double>(0, (a, b) => a > b ? a : b);
+    return LineChart(
+      LineChartData(
+        minY: 0,
+        maxY: maxY <= 0 ? 1 : maxY * 1.2,
+        gridData: const FlGridData(show: true, drawVerticalLine: false),
+        borderData: FlBorderData(show: false),
+        titlesData: FlTitlesData(
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 44,
+              getTitlesWidget: (v, _) => Text(
+                v >= 1000 ? '${(v / 1000).toStringAsFixed(0)}jt' : '${v.toStringAsFixed(0)}rb',
+                style: const TextStyle(fontSize: 10),
+              ),
+            ),
+          ),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              interval: dates.length > 6 ? (dates.length / 6).ceilToDouble() : 1,
+              getTitlesWidget: (v, _) {
+                final i = v.toInt();
+                if (i < 0 || i >= dates.length) return const SizedBox.shrink();
+                final d = dates[i];
+                final label = d.length >= 10 ? '${d.substring(8,10)}/${d.substring(5,7)}' : d;
+                return Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(label, style: const TextStyle(fontSize: 10)),
+                );
+              },
+            ),
+          ),
+        ),
+        lineBarsData: [
+          LineChartBarData(
+            spots: spots,
+            isCurved: true,
+            color: const Color(0xFF0F5C4D),
+            barWidth: 3,
+            dotData: const FlDotData(show: false),
+            belowBarData: BarAreaData(show: true, color: const Color(0x330F5C4D)),
+          ),
+        ],
+        lineTouchData: LineTouchData(
+          touchTooltipData: LineTouchTooltipData(
+            getTooltipItems: (touched) => touched.map((t) {
+              final i = t.x.toInt();
+              final date = i >= 0 && i < dates.length ? dates[i] : '';
+              return LineTooltipItem('$date\n${rupiah(t.y * 1000)}', const TextStyle(color: Colors.white));
+            }).toList(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CycleChart extends StatelessWidget {
+  const _CycleChart({required this.cycles, required this.values, required this.rupiah});
+  final List<int> cycles;
+  final Map<int, double> values;
+  final String Function(num) rupiah;
+
+  @override
+  Widget build(BuildContext context) {
+    if (cycles.isEmpty) return const Center(child: Text('Belum ada data siklus'));
+    final maxY = cycles.map((c) => (values[c] ?? 0) / 1000.0).fold<double>(0, (a, b) => a > b ? a : b);
+    return BarChart(
+      BarChartData(
+        minY: 0,
+        maxY: maxY <= 0 ? 1 : maxY * 1.2,
+        gridData: const FlGridData(show: true, drawVerticalLine: false),
+        borderData: FlBorderData(show: false),
+        titlesData: FlTitlesData(
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 44,
+              getTitlesWidget: (v, _) => Text(
+                v >= 1000 ? '${(v / 1000).toStringAsFixed(0)}jt' : '${v.toStringAsFixed(0)}rb',
+                style: const TextStyle(fontSize: 10),
+              ),
+            ),
+          ),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              getTitlesWidget: (v, _) {
+                final i = v.toInt();
+                if (i < 0 || i >= cycles.length) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('S${cycles[i]}', style: const TextStyle(fontSize: 10)),
+                );
+              },
+            ),
+          ),
+        ),
+        barGroups: [
+          for (var i = 0; i < cycles.length; i++)
+            BarChartGroupData(x: i, barRods: [
+              BarChartRodData(
+                toY: (values[cycles[i]] ?? 0) / 1000.0,
+                color: const Color(0xFFF2A900),
+                width: cycles.length > 8 ? 12 : 20,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+              ),
+            ]),
+        ],
+        barTouchData: BarTouchData(
+          touchTooltipData: BarTouchTooltipData(
+            getTooltipItem: (group, _, rod, __) {
+              final i = group.x;
+              final c = i >= 0 && i < cycles.length ? cycles[i] : 0;
+              return BarTooltipItem('Siklus $c\n${rupiah(rod.toY * 1000)}', const TextStyle(color: Colors.white));
+            },
+          ),
         ),
       ),
     );
