@@ -1056,9 +1056,13 @@ class _InputTabState extends State<InputTab> {
   final _stokAwalFocus = FocusNode();
   final _stokAkhirFocus = FocusNode();
   final _stokNoteFocus = FocusNode();
+  final _scrollCtrl = ScrollController();
+  final Map<String, GlobalKey> _recentKeys = {};
   late String _date;
   String? _editDate;
   int? _stokCycleLoaded;
+  int? _historyCycle;
+  String? _scrollToDate;
 
   String _today() => DateTime.now().toString().substring(0, 10);
 
@@ -1082,6 +1086,8 @@ class _InputTabState extends State<InputTab> {
       _stokAkhirCtrl.clear();
       _stokNoteCtrl.clear();
       _stokCycleLoaded = null;
+      _historyCycle = null;
+      _scrollToDate = null;
     }
   }
 
@@ -1101,6 +1107,7 @@ class _InputTabState extends State<InputTab> {
     _stokAwalFocus.dispose();
     _stokAkhirFocus.dispose();
     _stokNoteFocus.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
@@ -1109,6 +1116,29 @@ class _InputTabState extends State<InputTab> {
     final d = DateTime.tryParse(iso);
     if (d == null) return iso;
     return names[d.weekday - 1];
+  }
+
+  void _scrollToTop() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+      }
+    });
+  }
+
+  void _queueScrollToDate(String date) {
+    _scrollToDate = date;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _flushScrollToDate());
+  }
+
+  void _flushScrollToDate() {
+    final d = _scrollToDate;
+    if (d == null) return;
+    final ctx = _recentKeys[d]?.currentContext;
+    if (ctx != null) {
+      _scrollToDate = null;
+      Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300), curve: Curves.easeOut, alignment: 0.2);
+    }
   }
 
   void _syncCycleDay(WarungData w, String date) {
@@ -1223,14 +1253,16 @@ class _InputTabState extends State<InputTab> {
       _stokCycleLoaded = null;
     });
     _loadStokForCycle(w, r.cycle);
+    _scrollToTop();
   }
 
-  void _clearForm() {
+  void _clearForm({String? scrollBackDate, int? scrollBackCycle}) {
     setState(() {
       _editDate = null;
       _date = _today();
       _omsetCtrl.clear();
       _expCtrl.clear();
+      if (scrollBackCycle != null) _historyCycle = scrollBackCycle;
     });
     final w = widget.activeWarung;
     if (w != null) {
@@ -1239,6 +1271,19 @@ class _InputTabState extends State<InputTab> {
       _stokCycleLoaded = null;
       _loadStokForCycle(w, c);
     }
+    if (scrollBackDate != null) {
+      _queueScrollToDate(scrollBackDate);
+    }
+  }
+
+  void _cancelEdit(WarungData w) {
+    final backDate = _editDate;
+    int? backCycle;
+    if (backDate != null) {
+      final rec = w.records.where((r) => r.date == backDate).toList();
+      if (rec.isNotEmpty) backCycle = rec.first.cycle;
+    }
+    _clearForm(scrollBackDate: backDate, scrollBackCycle: backCycle);
   }
 
   Future<void> _pickDate() async {
@@ -1341,6 +1386,8 @@ class _InputTabState extends State<InputTab> {
     w.records.sort((a, b) => a.date.compareTo(b.date));
     await widget.onSaved();
     if (!mounted) return;
+    final savedDate = rec.date;
+    final savedCycle = rec.cycle;
     final next = _nextDate(_date);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: const Text('Tersimpan'),
@@ -1353,16 +1400,18 @@ class _InputTabState extends State<InputTab> {
                   _date = next;
                   _omsetCtrl.clear();
                   _expCtrl.clear();
+                  _scrollToDate = null;
                 });
                 _syncCycleDay(w, next);
                 final c = int.tryParse(_cycleCtrl.text.trim()) ?? cycle;
                 _stokCycleLoaded = null;
                 _loadStokForCycle(w, c);
+                _scrollToTop();
               },
             )
           : null,
     ));
-    _clearForm();
+    _clearForm(scrollBackDate: savedDate, scrollBackCycle: savedCycle);
   }
 
   Future<void> _delete(WarungData w, String date) async {
@@ -1494,24 +1543,28 @@ class _InputTabState extends State<InputTab> {
   }
 
   Widget _recentTile(WarungData w, OmRecord r) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: CircleAvatar(
-          radius: 16,
-          backgroundColor: const Color(0xFFE6F2EF),
-          child: Text('${r.day}', style: const TextStyle(fontSize: 12, color: Color(0xFF0F5C4D), fontWeight: FontWeight.bold)),
-        ),
-        title: Text(r.date, style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text('${_dayName(r.date)} · Siklus ${r.cycle}${r.expense.isNotEmpty ? ' · ${r.expense}' : ''}'),
-        trailing: Wrap(
-          spacing: 0,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Text(widget.rupiah(r.omset), style: const TextStyle(fontWeight: FontWeight.bold)),
-            IconButton(icon: const Icon(Icons.edit, size: 20), onPressed: () => _loadForEdit(w, r)),
-            IconButton(icon: const Icon(Icons.delete_outline, size: 20), onPressed: () => _delete(w, r.date)),
-          ],
+    final key = _recentKeys.putIfAbsent(r.date, () => GlobalKey());
+    return Container(
+      key: key,
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 8),
+        child: ListTile(
+          leading: CircleAvatar(
+            radius: 16,
+            backgroundColor: const Color(0xFFE6F2EF),
+            child: Text('${r.day}', style: const TextStyle(fontSize: 12, color: Color(0xFF0F5C4D), fontWeight: FontWeight.bold)),
+          ),
+          title: Text(r.date, style: const TextStyle(fontWeight: FontWeight.w600)),
+          subtitle: Text('${_dayName(r.date)} · Siklus ${r.cycle}${r.expense.isNotEmpty ? ' · ${r.expense}' : ''}'),
+          trailing: Wrap(
+            spacing: 0,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(widget.rupiah(r.omset), style: const TextStyle(fontWeight: FontWeight.bold)),
+              IconButton(icon: const Icon(Icons.edit, size: 20), onPressed: () => _loadForEdit(w, r)),
+              IconButton(icon: const Icon(Icons.delete_outline, size: 20), onPressed: () => _delete(w, r.date)),
+            ],
+          ),
         ),
       ),
     );
@@ -1536,8 +1589,11 @@ class _InputTabState extends State<InputTab> {
     final preview = _parseRp(_omsetCtrl.text) * w.settings.pct / 100;
     final lc = _lastCycle(w);
     final canDel = _canDeleteCycle(w, lc);
-    final runningCycle = cycleOfDate(_today(), w.settings.cr) ?? _allCycleNos(w).last;
-    final recent = w.records.where((r) => r.cycle == runningCycle).toList()
+    final allCycles = _allCycleNos(w);
+    final lastCycle = allCycles.last;
+    final historyCycle = (_historyCycle != null && allCycles.contains(_historyCycle)) ? _historyCycle! : lastCycle;
+    _historyCycle = historyCycle;
+    final recent = w.records.where((r) => r.cycle == historyCycle).toList()
       ..sort((a, b) => b.date.compareTo(a.date));
     _loadStokForCycle(w, cycle);
     final stokAwal = _parseNum(_stokAwalCtrl.text);
@@ -1545,7 +1601,9 @@ class _InputTabState extends State<InputTab> {
     final stokSelisih = (stokAwal != null && stokAkhir != null) ? (stokAkhir - stokAwal) : null;
     final syncBad = !widget.syncing && (widget.syncInfo ?? '').toLowerCase().contains('gagal');
 
+    WidgetsBinding.instance.addPostFrameCallback((_) => _flushScrollToDate());
     return ListView(
+      controller: _scrollCtrl,
       padding: const EdgeInsets.all(16),
       children: [
         if (syncBad)
@@ -1828,7 +1886,7 @@ class _InputTabState extends State<InputTab> {
                     ),
                     if (_editDate != null) ...[
                       const SizedBox(width: 8),
-                      OutlinedButton(onPressed: _clearForm, child: const Text('Batal')),
+                      OutlinedButton(onPressed: () => _cancelEdit(w), child: const Text('Batal')),
                       const SizedBox(width: 8),
                       OutlinedButton(
                         onPressed: () => _delete(w, _editDate!),
@@ -1845,44 +1903,59 @@ class _InputTabState extends State<InputTab> {
         const SizedBox(height: 16),
         Card(
           clipBehavior: Clip.antiAlias,
-          child: recent.length > 10
-              ? ExpansionTile(
-                  initiallyExpanded: true,
-                  title: Text('Riwayat Terbaru · Siklus $runningCycle',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  subtitle: Text('${recent.length} catatan'),
-                  childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    if (recent.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: Text('Belum ada catatan omset pada siklus berjalan.'),
-                      )
-                    else
-                      ...recent.map((r) => _recentTile(w, r)),
-                  ],
-                )
-              : Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text('Riwayat Terbaru · Siklus $runningCycle',
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                        subtitle: Text('${recent.length} catatan'),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Riwayat Terbaru', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          Text('${recent.length} catatan', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                        ],
                       ),
-                      if (recent.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: Text('Belum ada catatan omset pada siklus berjalan.'),
-                        )
-                      else
-                        ...recent.map((r) => _recentTile(w, r)),
-                    ],
-                  ),
+                    ),
+                    SizedBox(
+                      width: 150,
+                      child: DropdownButtonFormField<int>(
+                        value: historyCycle,
+                        isDense: true,
+                        decoration: InputDecoration(
+                          labelText: 'Siklus',
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        items: allCycles.reversed.map((c) => DropdownMenuItem(value: c, child: Text('Siklus $c${c == lastCycle ? ' (terakhir)' : ''}'))).toList(),
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setState(() => _historyCycle = v);
+                        },
+                      ),
+                    ),
+                  ],
                 ),
+                const SizedBox(height: 8),
+                if (recent.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Text('Belum ada catatan omset pada siklus ini.'),
+                  )
+                else if (recent.length > 10)
+                  ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    initiallyExpanded: true,
+                    title: Text('Tampilkan ${recent.length} catatan', style: const TextStyle(fontSize: 13)),
+                    children: recent.map((r) => _recentTile(w, r)).toList(),
+                  )
+                else
+                  ...recent.map((r) => _recentTile(w, r)),
+              ],
+            ),
+          ),
         ),
       ],
     );
