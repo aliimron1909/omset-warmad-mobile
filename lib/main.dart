@@ -1114,9 +1114,21 @@ class _InputTabState extends State<InputTab> {
     }
     await widget.onSaved();
     if (!mounted) return;
-    _syncCycleDay(w, _date);
-    setState(() {});
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Siklus $c dibuat')));
+    final auto = cycleOfDate(_date, w.settings.cr) != null;
+    if (!auto) {
+      setState(() {
+        _editDate = null;
+        _omsetCtrl.clear();
+        _expCtrl.clear();
+        _cycleCtrl.text = '$c';
+        _dayCtrl.text = '1';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Siklus $c dibuat. Silakan isi omset untuk siklus baru.')));
+    } else {
+      _syncCycleDay(w, _date);
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Siklus $c disiapkan. Siklus aktif tetap mengikuti tanggal.')));
+    }
   }
 
   bool _canDeleteCycle(WarungData w, int c) {

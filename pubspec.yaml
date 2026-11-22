@@ -1,7 +1,7 @@
 name: warmad_mobile
 description: Aplikasi Omset-WarMad native (Flutter).
 publish_to: 'none'
-version: 5.2.2+16
+version: 5.2.3+17
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
