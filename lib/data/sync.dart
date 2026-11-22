@@ -157,6 +157,22 @@ class SyncEngine {
       local.cycleStok = {...rw.cycleStok, ...local.cycleStok};
       local.cyclePenjaga = {...rw.cyclePenjaga, ...local.cyclePenjaga};
 
+      // Tombstone siklus terhapus: cegah pull menghidupkan kembali siklus kosong.
+      final del = <int>{...local.deletedCycles, ...rw.deletedCycles};
+      local.deletedCycles = del.toList()..sort();
+      for (final c in local.deletedCycles.toList()) {
+        final hasRec = local.records.any((r) => r.cycle == c);
+        if (hasRec) {
+          local.deletedCycles.remove(c);
+          continue;
+        }
+        local.kontrakOptions.remove(c);
+        local.jagaModes.remove(c);
+        local.cycleNames.remove(c);
+        local.cycleStok.remove(c);
+        local.cyclePenjaga.remove(c);
+      }
+
       // Nama warung: ambil dari server hanya bila lokal masih kosong/default.
       if (isNew ||
           local.settings.nama.isEmpty ||

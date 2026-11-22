@@ -29,6 +29,7 @@ class WarungData {
   Map<int, Map<String, String>> cycleNames;
   Map<int, CycleStok> cycleStok;
   Map<int, CustomGuards> cyclePenjaga;
+  List<int> deletedCycles;
 
   WarungData({
     required this.id,
@@ -39,13 +40,15 @@ class WarungData {
     Map<int, Map<String, String>>? cycleNames,
     Map<int, CycleStok>? cycleStok,
     Map<int, CustomGuards>? cyclePenjaga,
+    List<int>? deletedCycles,
   })  : settings = settings ?? AppSettings(),
         records = records ?? <OmRecord>[],
         kontrakOptions = kontrakOptions ?? <int, String>{},
         jagaModes = jagaModes ?? <int, String>{},
         cycleNames = cycleNames ?? <int, Map<String, String>>{},
         cycleStok = cycleStok ?? <int, CycleStok>{},
-        cyclePenjaga = cyclePenjaga ?? <int, CustomGuards>{};
+        cyclePenjaga = cyclePenjaga ?? <int, CustomGuards>{},
+        deletedCycles = deletedCycles ?? <int>[];
 
   factory WarungData.fromJson(Map<String, dynamic> j) {
     final names = _intKeyMap<Map<String, String>>(j['cycleNames'], (v) {
@@ -70,6 +73,10 @@ class WarungData {
           j['cycleStok'], (v) => CycleStok.fromJson(_asMap(v))),
       cyclePenjaga: _intKeyMap<CustomGuards>(
           j['cyclePenjaga'], (v) => CustomGuards.fromJson(_asMap(v))),
+      deletedCycles: ((j['deletedCycles'] as List?) ?? [])
+          .map((e) => int.tryParse(e.toString()))
+          .whereType<int>()
+          .toList(),
     );
   }
 
@@ -91,5 +98,6 @@ class WarungData {
               'pp': v.pp,
               'list': v.list.map((g) => g.toJson()).toList(),
             }),
+        'deletedCycles': deletedCycles,
       };
 }

@@ -1123,6 +1123,7 @@ class _InputTabState extends State<InputTab> {
       final prev = w.cyclePenjaga[lc]!;
       w.cyclePenjaga[c] = CustomGuards(pp: prev.pp, list: prev.list.map((g) => Guard(n: g.n, t: g.t, g: g.g)).toList());
     }
+    w.deletedCycles.remove(c);
     await widget.onSaved();
     if (!mounted) return;
     final auto = cycleOfDate(_date, w.settings.cr) != null;
@@ -1177,6 +1178,7 @@ class _InputTabState extends State<InputTab> {
     w.cycleNames.remove(c);
     w.cycleStok.remove(c);
     w.cyclePenjaga.remove(c);
+    if (!w.deletedCycles.contains(c)) w.deletedCycles.add(c);
     await widget.onSaved();
     if (!mounted) return;
     _syncCycleDay(w, _date);
