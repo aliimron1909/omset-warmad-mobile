@@ -89,12 +89,13 @@ class SetupPage extends StatefulWidget {
 class _SetupPageState extends State<SetupPage> {
   final _controller = TextEditingController();
   bool _busy = false;
+  bool _premiumLicense = false;
   String? _error;
 
   Future<void> _activate() async {
     final code = _controller.text.trim().toUpperCase();
     if (code.isEmpty) {
-      setState(() => _error = 'Kode akses wajib diisi');
+      setState(() => _error = 'Kode wajib diisi');
       return;
     }
     setState(() {
@@ -102,24 +103,65 @@ class _SetupPageState extends State<SetupPage> {
       _error = null;
     });
     try {
-      final r = await api.syncRegister(code, widget.device);
-      if (r['ok'] != true) {
-        setState(() => _error = (r['error'] as String?) ?? 'Kode tidak valid');
-        return;
+      if (_premiumLicense) {
+        await _activatePremiumLicense(code);
+      } else {
+        await _activateAccessCode(code);
       }
-      widget.state.key = (r['key'] as String?) ?? code;
-      await widget.store.save(widget.state);
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => HomePage(state: widget.state, store: widget.store),
-        ),
-      );
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _activatePremiumLicense(String code) async {
+    final lic = await api.licActivate(code, widget.device);
+    if (lic['ok'] != true) {
+      setState(() => _error = (lic['error'] as String?) ?? 'Kode lisensi tidak valid');
+      return;
+    }
+    // Kode lisensi premium harus ditukar menjadi Kode Pemilik untuk sync.
+    final reg = await api.syncRegister(code, widget.device);
+    if (reg['ok'] != true) {
+      setState(() => _error =
+          (reg['error'] as String?) ?? 'Lisensi aktif, tetapi gagal menyiapkan sync');
+      return;
+    }
+    widget.state.key = (reg['key'] as String?) ?? code;
+    widget.state.premium = true;
+    await widget.store.save(widget.state);
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => HomePage(state: widget.state, store: widget.store),
+      ),
+    );
+  }
+
+  Future<void> _activateAccessCode(String code) async {
+    final r = await api.syncRegister(code, widget.device);
+    if (r['ok'] != true) {
+      final msg = (r['error'] as String?) ?? 'Kode tidak valid';
+      // Petunjuk jika pengguna memasukkan kode lisensi di mode warung/karyawan.
+      if (msg.toLowerCase().contains('belum terdaftar untuk lisensi')) {
+        setState(() {
+          _error =
+              '$msg\n\nJika ini kode lisensi premium, pilih "Lisensi Premium" di atas lalu aktifkan lagi.';
+        });
+        return;
+      }
+      setState(() => _error = msg);
+      return;
+    }
+    widget.state.key = (r['key'] as String?) ?? code;
+    await widget.store.save(widget.state);
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => HomePage(state: widget.state, store: widget.store),
+      ),
+    );
   }
 
   @override
@@ -134,24 +176,48 @@ class _SetupPageState extends State<SetupPage> {
             const Icon(Icons.storefront, size: 72, color: Color(0xFF0F5C4D)),
             const SizedBox(height: 16),
             const Text(
-              'Masukkan kode akses',
+              'Aktifkan perangkat',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Kode akses diperoleh dari pemilik warung atau aktivasi lisensi.',
+            Text(
+              _premiumLicense
+                  ? 'Masukkan kode lisensi premium Anda. Perangkat akan didaftarkan lalu disiapkan untuk sinkronisasi.'
+                  : 'Masukkan kode akses warung/pemilik atau kode karyawan yang diberikan pemilik.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
+              style: const TextStyle(color: Colors.grey),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment<bool>(
+                  value: false,
+                  label: Text('Kode Warung'),
+                  icon: Icon(Icons.key),
+                ),
+                ButtonSegment<bool>(
+                  value: true,
+                  label: Text('Lisensi Premium'),
+                  icon: Icon(Icons.workspace_premium),
+                ),
+              ],
+              selected: {_premiumLicense},
+              onSelectionChanged: _busy
+                  ? null
+                  : (s) => setState(() {
+                        _premiumLicense = s.first;
+                        _error = null;
+                      }),
+            ),
+            const SizedBox(height: 20),
             TextField(
               controller: _controller,
               textCapitalization: TextCapitalization.characters,
-              decoration: const InputDecoration(
-                labelText: 'Kode akses',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.key),
+              decoration: InputDecoration(
+                labelText: _premiumLicense ? 'Kode lisensi premium' : 'Kode akses',
+                border: const OutlineInputBorder(),
+                prefixIcon: Icon(_premiumLicense ? Icons.workspace_premium : Icons.key),
               ),
               onSubmitted: (_) => _busy ? null : _activate(),
             ),
