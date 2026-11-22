@@ -126,4 +126,47 @@ void main() {
     expect(client.requests[2]['action'], 'pull');
     expect(store.state.rev, 10);
   });
+
+  test('tombstone mencegah siklus kosong terhapus hidup kembali saat pull', () async {
+    final client = FakeClient()
+      ..queue.addAll([
+        {
+          'ok': true,
+          'peran': 'pemilik',
+          'rev': 5,
+          'warung': [
+            {
+              'id': 'w1',
+              'settings': {'nama': 'W', 'pct': 10},
+              'records': [],
+              'cycleKontrakOptions': {'2': 'prorata'},
+              'cycleJagaModes': {'2': 'solo'},
+              'cycleNames': {'2': {'k1': 'A'}},
+              'cycleStok': {'2': {'awal': 100}},
+              'cyclePenjaga': {}
+            }
+          ],
+          'akses': [],
+        },
+        {'ok': true, 'rev': 6, 'warung': 1},
+      ]);
+
+    final w = WarungData(id: 'w1')
+      ..deletedCycles = [2]
+      ..kontrakOptions = {}
+      ..jagaModes = {}
+      ..cycleNames = {}
+      ..cycleStok = {}
+      ..cyclePenjaga = {};
+    final store = MemoryStore(LocalState(key: 'PMK1', device: 'd1', warung: [w]));
+    final out = await SyncEngine(api: ApiClient(client: client), store: store).sync();
+
+    expect(out.ok, isTrue);
+    final lw = store.state.warung.single;
+    expect(lw.kontrakOptions.containsKey(2), isFalse);
+    expect(lw.jagaModes.containsKey(2), isFalse);
+    expect(lw.cycleNames.containsKey(2), isFalse);
+    expect(lw.cycleStok.containsKey(2), isFalse);
+    expect(lw.deletedCycles, contains(2));
+  });
 }

@@ -64,6 +64,20 @@ void main() {
           '{\"s\":\"2026-10-05\",\"e\":\"2026-10-31\",\"len\":27}');
       expect(cycleOfDate('2026-11-02', cr), 2);
     });
+
+    test('3 mode siklus: 30 hari tetap manual, kalender, serah terima', () {
+      final manual = [CycleRule(n: 1, s: '2026-01-01', d: 0)];
+      expect(cycleOfDate('2026-11-10', manual), isNull);
+      expect(cycSpan(1, manual), isNull);
+
+      final calendar = [CycleRule(n: 1, s: '2026-01-01', d: 1)];
+      expect(cycleOfDate('2026-02-14', calendar), 2);
+      expect(cycSpan(2, calendar)!.len, 28);
+
+      final handover = [CycleRule(n: 1, s: '2026-01-10', d: 10)];
+      expect(cycleOfDate('2026-01-15', handover), 1);
+      expect(cycleOfDate('2026-02-10', handover), 2);
+    });
   });
 
   group('perhitungan bagi hasil', () {

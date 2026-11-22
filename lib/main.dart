@@ -532,6 +532,14 @@ class _HomePageState extends State<HomePage> {
             updateInfo: _updateInfo,
             checking: _checkingUpdate,
             onCheckUpdate: () => _checkUpdate(manual: true),
+            state: widget.state,
+            activeWarung: _activeWarung,
+            onWarungChanged: (id) => setState(() => _activeWarungId = id),
+            onSaved: () async {
+              await widget.store.save(widget.state);
+              if (mounted) setState(() => _info = 'Pengaturan tersimpan');
+              _sync();
+            },
           ),
         ],
       ),
@@ -739,6 +747,8 @@ class _HomePageState extends State<HomePage> {
         _sync();
       },
       rupiah: _rupiah,
+      syncInfo: _info,
+      syncing: _busy,
     );
   }
 }
@@ -765,25 +775,177 @@ class _PlaceholderTab extends StatelessWidget {
   }
 }
 
-class _SettingsTab extends StatelessWidget {
+class _SettingsTab extends StatefulWidget {
   const _SettingsTab({
     required this.appVersion,
     required this.updateInfo,
     required this.checking,
     required this.onCheckUpdate,
+    required this.state,
+    required this.activeWarung,
+    required this.onWarungChanged,
+    required this.onSaved,
   });
 
   final String appVersion;
   final UpdateInfo? updateInfo;
   final bool checking;
   final VoidCallback onCheckUpdate;
+  final LocalState state;
+  final WarungData? activeWarung;
+  final ValueChanged<String> onWarungChanged;
+  final Future<void> Function() onSaved;
+
+  @override
+  State<_SettingsTab> createState() => _SettingsTabState();
+}
+
+class _SettingsTabState extends State<_SettingsTab> {
+  String _mode = '30'; // 30 | calendar | handover
+  final _handoverCtrl = TextEditingController(text: '1');
+  final _startCtrl = TextEditingController();
+  final _cycleNCtrl = TextEditingController(text: '1');
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFromWarung();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SettingsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.activeWarung?.id != widget.activeWarung?.id) _loadFromWarung();
+  }
+
+  @override
+  void dispose() {
+    _handoverCtrl.dispose();
+    _startCtrl.dispose();
+    _cycleNCtrl.dispose();
+    super.dispose();
+  }
+
+  void _loadFromWarung() {
+    final w = widget.activeWarung;
+    final cr = (w != null && w.settings.cr.isNotEmpty) ? w.settings.cr.first : null;
+    if (cr == null || cr.d == 0) {
+      _mode = '30';
+      _handoverCtrl.text = '1';
+      _startCtrl.text = _today();
+      _cycleNCtrl.text = cr?.n.toString() ?? '1';
+    } else if (cr.d == 1) {
+      _mode = 'calendar';
+      _handoverCtrl.text = '1';
+      _startCtrl.text = cr.s;
+      _cycleNCtrl.text = cr.n.toString();
+    } else {
+      _mode = 'handover';
+      _handoverCtrl.text = cr.d.toString();
+      _startCtrl.text = cr.s;
+      _cycleNCtrl.text = cr.n.toString();
+    }
+    setState(() {});
+  }
+
+  String _today() => DateTime.now().toString().substring(0, 10);
+
+  Future<void> _pickStart() async {
+    final now = DateTime.now();
+    final initial = DateTime.tryParse(_startCtrl.text) ?? now;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+    );
+    if (picked != null) setState(() => _startCtrl.text = picked.toString().substring(0, 10));
+  }
+
+  Future<void> _saveCycleRule() async {
+    final w = widget.activeWarung;
+    if (w == null) return;
+    final n = int.tryParse(_cycleNCtrl.text.trim()) ?? 1;
+    final s = _startCtrl.text.trim().isEmpty ? _today() : _startCtrl.text.trim();
+    int d = 0;
+    if (_mode == 'calendar') d = 1;
+    if (_mode == 'handover') d = (int.tryParse(_handoverCtrl.text.trim()) ?? 1).clamp(1, 31);
+    w.settings.cr = [CycleRule(n: n < 1 ? 1 : n, s: s, d: d)];
+    await widget.onSaved();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Aturan siklus disimpan')));
+  }
 
   @override
   Widget build(BuildContext context) {
-    final hasUpdate = updateInfo?.hasUpdate == true;
+    final hasUpdate = widget.updateInfo?.hasUpdate == true;
+    final w = widget.activeWarung;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Aturan Siklus', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                if (widget.state.warung.length > 1)
+                  DropdownButtonFormField<String>(
+                    value: w?.id,
+                    decoration: InputDecoration(labelText: 'Warung', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+                    items: widget.state.warung.map((x) => DropdownMenuItem(value: x.id, child: Text(x.settings.nama))).toList(),
+                    onChanged: (v) { if (v != null) widget.onWarungChanged(v); },
+                  ),
+                if (widget.state.warung.length > 1) const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: _mode,
+                  decoration: InputDecoration(labelText: 'Mode siklus', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+                  items: const [
+                    DropdownMenuItem(value: '30', child: Text('30 hari tetap (manual)')),
+                    DropdownMenuItem(value: 'calendar', child: Text('Bulan kalender')),
+                    DropdownMenuItem(value: 'handover', child: Text('Tanggal serah terima')),
+                  ],
+                  onChanged: (v) => setState(() => _mode = v ?? '30'),
+                ),
+                const SizedBox(height: 12),
+                if (_mode == 'handover')
+                  TextField(
+                    controller: _handoverCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(labelText: 'Tanggal serah terima (1-31)', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+                  ),
+                if (_mode == 'handover') const SizedBox(height: 12),
+                InkWell(
+                  onTap: _pickStart,
+                  child: InputDecorator(
+                    decoration: InputDecoration(labelText: 'Tanggal mulai aturan', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), suffixIcon: const Icon(Icons.calendar_today)),
+                    child: Text(_startCtrl.text.isEmpty ? _today() : _startCtrl.text),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _cycleNCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(labelText: 'Nomor siklus mulai', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _mode == '30'
+                      ? 'Mode 30 hari: Siklus/Hari diisi manual. Gunakan "Siklus Baru" di Tab Input untuk memulai siklus berikutnya.'
+                      : _mode == 'calendar'
+                          ? 'Mode kalender: Siklus berjalan dari tanggal 1 sampai akhir bulan.'
+                          : 'Mode serah terima: Siklus berjalan dari tanggal serah sampai sehari sebelum tanggal yang sama bulan berikutnya.',
+                  style: const TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.icon(onPressed: w == null ? null : _saveCycleRule, icon: const Icon(Icons.save), label: const Text('Simpan Aturan Siklus')),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -796,7 +958,7 @@ class _SettingsTab extends StatelessWidget {
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.info_outline),
                   title: const Text('Versi aplikasi'),
-                  subtitle: Text(appVersion.isEmpty ? '-' : 'v$appVersion'),
+                  subtitle: Text(widget.appVersion.isEmpty ? '-' : 'v${widget.appVersion}'),
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
@@ -804,22 +966,22 @@ class _SettingsTab extends StatelessWidget {
                       color: hasUpdate ? Colors.orange : Colors.green),
                   title: Text(hasUpdate ? 'Update tersedia' : 'Status update'),
                   subtitle: Text(hasUpdate
-                      ? 'Versi terbaru: v${updateInfo?.latestVersion}'
-                      : (updateInfo == null ? 'Belum dicek' : 'Aplikasi sudah terbaru')),
+                      ? 'Versi terbaru: v${widget.updateInfo?.latestVersion}'
+                      : (widget.updateInfo == null ? 'Belum dicek' : 'Aplikasi sudah terbaru')),
                 ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
-                  onPressed: checking ? null : onCheckUpdate,
-                  icon: checking
+                  onPressed: widget.checking ? null : widget.onCheckUpdate,
+                  icon: widget.checking
                       ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.refresh),
-                  label: Text(checking ? 'Mengecek...' : 'Cek Update'),
+                  label: Text(widget.checking ? 'Mengecek...' : 'Cek Update'),
                 ),
                 if (hasUpdate) ...[
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     onPressed: () async {
-                      final url = Uri.parse(updateInfo?.apkUrl ?? updateInfo?.releaseUrl ?? 'https://github.com/aliimron1909/omset-warmad-mobile/releases');
+                      final url = Uri.parse(widget.updateInfo?.apkUrl ?? widget.updateInfo?.releaseUrl ?? 'https://github.com/aliimron1909/omset-warmad-mobile/releases');
                       await launchUrl(url, mode: LaunchMode.externalApplication);
                     },
                     icon: const Icon(Icons.download),
@@ -862,6 +1024,8 @@ class InputTab extends StatefulWidget {
     required this.onWarungChanged,
     required this.onSaved,
     required this.rupiah,
+    this.syncInfo,
+    this.syncing = false,
   });
 
   final LocalState state;
@@ -870,6 +1034,8 @@ class InputTab extends StatefulWidget {
   final ValueChanged<String> onWarungChanged;
   final Future<void> Function() onSaved;
   final String Function(num) rupiah;
+  final String? syncInfo;
+  final bool syncing;
 
   @override
   State<InputTab> createState() => _InputTabState();
@@ -880,8 +1046,19 @@ class _InputTabState extends State<InputTab> {
   final _expCtrl = TextEditingController();
   final _cycleCtrl = TextEditingController();
   final _dayCtrl = TextEditingController();
+  final _stokAwalCtrl = TextEditingController();
+  final _stokAkhirCtrl = TextEditingController();
+  final _stokNoteCtrl = TextEditingController();
+  final _cycleFocus = FocusNode();
+  final _dayFocus = FocusNode();
+  final _omsetFocus = FocusNode();
+  final _expFocus = FocusNode();
+  final _stokAwalFocus = FocusNode();
+  final _stokAkhirFocus = FocusNode();
+  final _stokNoteFocus = FocusNode();
   late String _date;
   String? _editDate;
+  int? _stokCycleLoaded;
 
   String _today() => DateTime.now().toString().substring(0, 10);
 
@@ -901,6 +1078,10 @@ class _InputTabState extends State<InputTab> {
       _expCtrl.clear();
       _cycleCtrl.clear();
       _dayCtrl.clear();
+      _stokAwalCtrl.clear();
+      _stokAkhirCtrl.clear();
+      _stokNoteCtrl.clear();
+      _stokCycleLoaded = null;
     }
   }
 
@@ -910,6 +1091,16 @@ class _InputTabState extends State<InputTab> {
     _expCtrl.dispose();
     _cycleCtrl.dispose();
     _dayCtrl.dispose();
+    _stokAwalCtrl.dispose();
+    _stokAkhirCtrl.dispose();
+    _stokNoteCtrl.dispose();
+    _cycleFocus.dispose();
+    _dayFocus.dispose();
+    _omsetFocus.dispose();
+    _expFocus.dispose();
+    _stokAwalFocus.dispose();
+    _stokAkhirFocus.dispose();
+    _stokNoteFocus.dispose();
     super.dispose();
   }
 
@@ -958,6 +1149,50 @@ class _InputTabState extends State<InputTab> {
 
   int _parseRp(String s) => int.tryParse(s.replaceAll(RegExp(r'\D'), '')) ?? 0;
 
+  String _fmtNum(String raw) {
+    final v = raw.replaceAll(RegExp(r'[^0-9-]'), '');
+    if (v.isEmpty || v == '-') return v;
+    final neg = v.startsWith('-');
+    final digits = v.replaceAll('-', '');
+    if (digits.isEmpty) return neg ? '-' : '';
+    final n = int.tryParse(digits) ?? 0;
+    final s = n.toString();
+    final b = StringBuffer();
+    if (neg) b.write('-');
+    for (var i = 0; i < s.length; i++) {
+      final pos = s.length - i;
+      b.write(s[i]);
+      if (pos > 1 && pos % 3 == 1) b.write('.');
+    }
+    return b.toString();
+  }
+
+  double? _parseNum(String s) {
+    final t = s.trim().replaceAll('.', '').replaceAll(',', '.');
+    if (t.isEmpty) return null;
+    return double.tryParse(t);
+  }
+
+  void _loadStokForCycle(WarungData w, int cycle) {
+    if (_stokCycleLoaded == cycle) return;
+    final st = w.cycleStok[cycle];
+    _stokAwalCtrl.text = st?.awal == null ? '' : _fmtNum(st!.awal!.round().toString());
+    _stokAkhirCtrl.text = st?.akhir == null ? '' : _fmtNum(st!.akhir!.round().toString());
+    _stokNoteCtrl.text = st?.note ?? '';
+    _stokCycleLoaded = cycle;
+  }
+
+  void _setStokForCycle(WarungData w, int cycle) {
+    final awal = _parseNum(_stokAwalCtrl.text);
+    final akhir = _parseNum(_stokAkhirCtrl.text);
+    final note = _stokNoteCtrl.text.trim();
+    if (awal == null && akhir == null && note.isEmpty) {
+      w.cycleStok.remove(cycle);
+    } else {
+      w.cycleStok[cycle] = CycleStok(awal: awal, akhir: akhir, note: note);
+    }
+  }
+
   List<String> _missingDates(WarungData w, int cycle) {
     final rs = w.records.where((r) => r.cycle == cycle).toList()
       ..sort((a, b) => a.date.compareTo(b.date));
@@ -985,7 +1220,9 @@ class _InputTabState extends State<InputTab> {
       _expCtrl.text = r.expense;
       _cycleCtrl.text = '${r.cycle}';
       _dayCtrl.text = '${r.day}';
+      _stokCycleLoaded = null;
     });
+    _loadStokForCycle(w, r.cycle);
   }
 
   void _clearForm() {
@@ -996,7 +1233,12 @@ class _InputTabState extends State<InputTab> {
       _expCtrl.clear();
     });
     final w = widget.activeWarung;
-    if (w != null) _syncCycleDay(w, _date);
+    if (w != null) {
+      _syncCycleDay(w, _date);
+      final c = int.tryParse(_cycleCtrl.text.trim()) ?? _lastCycle(w);
+      _stokCycleLoaded = null;
+      _loadStokForCycle(w, c);
+    }
   }
 
   Future<void> _pickDate() async {
@@ -1022,6 +1264,12 @@ class _InputTabState extends State<InputTab> {
     }
   }
 
+  String _nextDate(String iso) {
+    final d = DateTime.tryParse(iso);
+    if (d == null) return _today();
+    return d.add(const Duration(days: 1)).toString().substring(0, 10);
+  }
+
   Future<void> _save(WarungData w) async {
     final omset = _parseRp(_omsetCtrl.text);
     if (omset <= 0) {
@@ -1038,23 +1286,82 @@ class _InputTabState extends State<InputTab> {
     final autoSp = ac != null ? cycSpan(ac, w.settings.cr) : null;
     final autoCycle = ac ?? _allCycleNos(w).last;
     final autoDay = ac != null && autoSp != null ? (diffD(autoSp.s, _date) + 1).clamp(1, 31) : 1;
-    final cycle = int.tryParse(_cycleCtrl.text.trim()) ?? autoCycle;
-    final day = (int.tryParse(_dayCtrl.text.trim()) ?? autoDay).clamp(1, 31);
+    final cycleRaw = _cycleCtrl.text.trim();
+    final dayRaw = _dayCtrl.text.trim();
+    final cycle = int.tryParse(cycleRaw);
+    final day = int.tryParse(dayRaw);
+    if (cycle == null || cycle < 1) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Siklus harus angka >= 1')));
+      return;
+    }
+    final maxDay = (auto && autoSp != null) ? autoSp.len : 31;
+    if (day == null || day < 1 || day > maxDay) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Hari harus 1-$maxDay')));
+      return;
+    }
+
+    if (_editDate != null) {
+      final old = w.records.where((r) => r.date == _editDate).toList();
+      final oldRec = old.isNotEmpty ? old.first : null;
+      final movedDate = _editDate != _date;
+      final movedCycle = oldRec != null && oldRec.cycle != cycle;
+      if (movedDate || movedCycle) {
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Pindahkan catatan?'),
+            content: Text(
+              movedDate && movedCycle
+                  ? 'Catatan akan dipindah dari $_editDate (Siklus ${oldRec?.cycle}) ke $_date (Siklus $cycle). Rekap dan bagi hasil akan berubah. Lanjutkan?'
+                  : movedDate
+                      ? 'Catatan akan dipindah dari $_editDate ke $_date. Rekap dapat berubah. Lanjutkan?'
+                      : 'Catatan akan dipindah ke Siklus $cycle. Rekap dan bagi hasil akan berubah. Lanjutkan?',
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Lanjutkan')),
+            ],
+          ),
+        );
+        if (ok != true) return;
+      }
+    }
 
     final rec = OmRecord(
       date: _date,
       cycle: cycle,
-      day: day.clamp(1, 31),
+      day: day,
       omset: omset.toDouble(),
       expense: _expCtrl.text.trim(),
     );
 
+    _setStokForCycle(w, cycle);
     w.records.removeWhere((r) => r.date == _editDate || r.date == rec.date);
     w.records.add(rec);
     w.records.sort((a, b) => a.date.compareTo(b.date));
     await widget.onSaved();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Tersimpan')));
+    final next = _nextDate(_date);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Text('Tersimpan'),
+      action: next.compareTo(_today()) <= 0
+          ? SnackBarAction(
+              label: 'Isi tanggal berikutnya',
+              onPressed: () {
+                setState(() {
+                  _editDate = null;
+                  _date = next;
+                  _omsetCtrl.clear();
+                  _expCtrl.clear();
+                });
+                _syncCycleDay(w, next);
+                final c = int.tryParse(_cycleCtrl.text.trim()) ?? cycle;
+                _stokCycleLoaded = null;
+                _loadStokForCycle(w, c);
+              },
+            )
+          : null,
+    ));
     _clearForm();
   }
 
@@ -1232,10 +1539,27 @@ class _InputTabState extends State<InputTab> {
     final runningCycle = cycleOfDate(_today(), w.settings.cr) ?? _allCycleNos(w).last;
     final recent = w.records.where((r) => r.cycle == runningCycle).toList()
       ..sort((a, b) => b.date.compareTo(a.date));
+    _loadStokForCycle(w, cycle);
+    final stokAwal = _parseNum(_stokAwalCtrl.text);
+    final stokAkhir = _parseNum(_stokAkhirCtrl.text);
+    final stokSelisih = (stokAwal != null && stokAkhir != null) ? (stokAkhir - stokAwal) : null;
+    final syncBad = !widget.syncing && (widget.syncInfo ?? '').toLowerCase().contains('gagal');
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (syncBad)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: const Color(0xFFFFF1F0), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE57373))),
+            child: Row(children: [
+              const Icon(Icons.sync_problem, color: Color(0xFFC0392B), size: 18),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Belum tersinkron: ${widget.syncInfo}', style: const TextStyle(color: Color(0xFFC0392B), fontSize: 12))),
+            ]),
+          ),
         if (st.warung.length > 1)
           DropdownButtonFormField<String>(
             value: w.id,
@@ -1344,19 +1668,25 @@ class _InputTabState extends State<InputTab> {
                     Expanded(
                       child: TextField(
                         controller: _cycleCtrl,
+                        focusNode: _cycleFocus,
                         keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.next,
+                        onSubmitted: (_) => _dayFocus.requestFocus(),
                         decoration: InputDecoration(
                           labelText: 'Siklus Ke-',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
-                        onChanged: (_) => setState(() {}),
+                        onChanged: (_) { _stokCycleLoaded = null; setState(() {}); },
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: TextField(
                         controller: _dayCtrl,
+                        focusNode: _dayFocus,
                         keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.next,
+                        onSubmitted: (_) => _omsetFocus.requestFocus(),
                         decoration: InputDecoration(
                           labelText: 'Hari Ke-${auto && sp != null ? ' (1–${sp.len})' : ''}',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
@@ -1370,6 +1700,12 @@ class _InputTabState extends State<InputTab> {
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
                     child: Text('Siklus $cycle: ${sp.s} s/d ${sp.e} (${sp.len} hari). Otomatis mengikuti tanggal, bisa diedit.',
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF0F5C4D))),
+                  ),
+                if (!auto)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text('Mode 30 hari tetap: Siklus/Hari diisi manual. Gunakan "Siklus Baru" untuk memulai siklus berikutnya.',
                         style: const TextStyle(fontSize: 12, color: Color(0xFF0F5C4D))),
                   ),
                 const SizedBox(height: 10),
@@ -1394,7 +1730,10 @@ class _InputTabState extends State<InputTab> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: _omsetCtrl,
+                  focusNode: _omsetFocus,
                   keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.next,
+                  onSubmitted: (_) => _expFocus.requestFocus(),
                   decoration: InputDecoration(
                     labelText: 'Omset Hari Ini',
                     hintText: 'Rp 0',
@@ -1414,12 +1753,70 @@ class _InputTabState extends State<InputTab> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: _expCtrl,
+                  focusNode: _expFocus,
                   maxLines: 2,
+                  textInputAction: TextInputAction.next,
+                  onSubmitted: (_) => _stokAwalFocus.requestFocus(),
                   decoration: InputDecoration(
                     labelText: 'Catatan Pengeluaran (informatif)',
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
+                const SizedBox(height: 16),
+                const Divider(),
+                const SizedBox(height: 8),
+                Text('Stok Siklus $cycle', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _stokAwalCtrl,
+                        focusNode: _stokAwalFocus,
+                        keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.next,
+                        onSubmitted: (_) => _stokAkhirFocus.requestFocus(),
+                        decoration: InputDecoration(labelText: 'Stok Awal', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+                        onChanged: (v) {
+                          final f = _fmtNum(v);
+                          if (f != v) _stokAwalCtrl.value = TextEditingValue(text: f, selection: TextSelection.collapsed(offset: f.length));
+                          setState(() {});
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: _stokAkhirCtrl,
+                        focusNode: _stokAkhirFocus,
+                        keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.next,
+                        onSubmitted: (_) => _stokNoteFocus.requestFocus(),
+                        decoration: InputDecoration(labelText: 'Stok Akhir', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+                        onChanged: (v) {
+                          final f = _fmtNum(v);
+                          if (f != v) _stokAkhirCtrl.value = TextEditingValue(text: f, selection: TextSelection.collapsed(offset: f.length));
+                          setState(() {});
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _stokNoteCtrl,
+                  focusNode: _stokNoteFocus,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _save(w),
+                  decoration: InputDecoration(labelText: 'Catatan Stok (opsional)', border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+                ),
+                if (stokSelisih != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Selisih Stok: ${stokSelisih >= 0 ? '+' : ''}${_fmtNum(stokSelisih.round().toString())}',
+                    style: TextStyle(color: stokSelisih < 0 ? const Color(0xFFC0392B) : const Color(0xFF0F5C4D), fontWeight: FontWeight.w600),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -1432,6 +1829,12 @@ class _InputTabState extends State<InputTab> {
                     if (_editDate != null) ...[
                       const SizedBox(width: 8),
                       OutlinedButton(onPressed: _clearForm, child: const Text('Batal')),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        onPressed: () => _delete(w, _editDate!),
+                        style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFC0392B), side: const BorderSide(color: Color(0xFFC0392B))),
+                        child: const Text('Hapus'),
+                      ),
                     ],
                   ],
                 ),
