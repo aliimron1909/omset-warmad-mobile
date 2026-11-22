@@ -62,7 +62,7 @@ jobs:
           APK=build/app/outputs/flutter-apk/app-release.apk
           "$BUILD_TOOLS/zipalign" -c -v 4 "$APK"
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" | tee apksigner.txt
-          grep -q '9C:94:A7:4A:2E:73:A1:B0:C9:F2:33:02:75:83:76:B0:4B:99:0B:DC:6B:74:DF:91:84:E2:FC:AE:86:7C:2D:47' apksigner.txt
+          grep -Eq '9c94a74a2e73a1b0c9f23302758376b04b990bdc6b74df9184e2fcae867c2d47|9C:94:A7:4A:2E:73:A1:B0:C9:F2:33:02:75:83:76:B0:4B:99:0B:DC:6B:74:DF:91:84:E2:FC:AE:86:7C:2D:47' apksigner.txt
 
       - name: Rename artifact
         run: |
