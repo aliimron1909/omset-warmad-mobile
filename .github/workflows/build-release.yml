@@ -42,7 +42,7 @@ jobs:
           test -n "$KEYSTORE_BASE64" || { echo "::error::ANDROID_KEYSTORE_BASE64 belum diisi"; exit 1; }
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > android/app/warmad-release.jks
           cat > android/key.properties <<EOF
-          storeFile=app/warmad-release.jks
+          storeFile=warmad-release.jks
           storePassword=$STORE_PASSWORD
           keyAlias=$KEY_ALIAS
           keyPassword=$KEY_PASSWORD
