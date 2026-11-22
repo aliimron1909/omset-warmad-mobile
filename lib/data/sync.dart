@@ -94,8 +94,8 @@ class SyncEngine {
   final ApiClient api;
   final SyncStore store;
 
-  Future<SyncOutcome> sync({int attempts = 2}) async {
-    final st = await store.load();
+  Future<SyncOutcome> sync({LocalState? state, int attempts = 2}) async {
+    final st = state ?? await store.load();
     final key = st.key;
     final device = st.device;
     if (key == null || key.isEmpty || device == null || device.isEmpty) {

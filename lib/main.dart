@@ -270,12 +270,15 @@ class _HomePageState extends State<HomePage> {
       _busy = true;
       _info = null;
     });
-    final r = await _engine.sync(widget.state);
-    if (!mounted) return;
-    setState(() {
-      _busy = false;
-      _info = r.message;
-    });
+    try {
+      final r = await _engine.sync(state: widget.state);
+      if (!mounted) return;
+      setState(() => _info = r.message);
+    } catch (e) {
+      if (mounted) setState(() => _info = e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   String _rupiah(num n) {
