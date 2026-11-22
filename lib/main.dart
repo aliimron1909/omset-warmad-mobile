@@ -496,25 +496,32 @@ class _HomePageState extends State<HomePage> {
                     ),
             ),
             const SizedBox(height: 16),
-            Text('Rekap warung · $selLabel',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            if (st.warung.isEmpty)
-              const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text(
-                    'Belum ada data. Tekan tombol sinkron untuk mengambil data dari server.',
-                    textAlign: TextAlign.center,
-                  ),
-                ),
+            Card(
+              clipBehavior: Clip.antiAlias,
+              child: ExpansionTile(
+                title: Text('Detail per warung · $selLabel',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text('${st.warung.length} warung'),
+                initiallyExpanded: false,
+                childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                children: [
+                  if (st.warung.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Text(
+                        'Belum ada data. Tekan tombol sinkron untuk mengambil data dari server.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ...st.warung.map((w) => _WarungCard(
+                        warung: w,
+                        today: today,
+                        rupiah: _rupiah,
+                        cycles: _cyclesFor(w, today),
+                      )),
+                ],
               ),
-            ...st.warung.map((w) => _WarungCard(
-                  warung: w,
-                  today: today,
-                  rupiah: _rupiah,
-                  cycles: _cyclesFor(w, today),
-                )),
+            ),
           ],
         ),
       ),

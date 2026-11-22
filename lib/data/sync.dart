@@ -128,7 +128,9 @@ class SyncEngine {
       );
     }
     st.role = (r['peran'] as String?) ?? 'pemilik';
-    st.premium = r['premium'] == true;
+    if (r.containsKey('premium')) {
+      st.premium = r['premium'] == true;
+    }
     if (r['rev'] != null) st.rev = (r['rev'] as num).toInt();
 
     final rawWarung = (r['warung'] as List?) ?? [];
