@@ -1,9 +1,12 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'data/api.dart';
 import 'data/local_store.dart';
 import 'data/sync.dart';
+import 'data/update_service.dart';
 import 'data/warung.dart';
 import 'domain/calc.dart';
 import 'domain/cycle.dart';
@@ -257,17 +260,96 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   late final SyncEngine _engine;
+  final UpdateService _updateService = UpdateService();
   bool _busy = false;
   String? _info;
   String _cycleSel = 'running'; // running | all | <cycle number>
   int _tab = 0;
   String? _activeWarungId;
+  String _appVersion = '';
+  UpdateInfo? _updateInfo;
+  bool _checkingUpdate = false;
 
   @override
   void initState() {
     super.initState();
     _engine = SyncEngine(api: api, store: widget.store);
     _activeWarungId = widget.state.warung.isNotEmpty ? widget.state.warung.first.id : null;
+    _initVersionAndCheckUpdate();
+  }
+
+  Future<void> _initVersionAndCheckUpdate() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() => _appVersion = info.version);
+    } catch (_) {}
+    await _checkUpdate(manual: false);
+  }
+
+  Future<void> _checkUpdate({required bool manual}) async {
+    if (_checkingUpdate) return;
+    setState(() => _checkingUpdate = true);
+    try {
+      final current = _appVersion.isNotEmpty ? _appVersion : (await PackageInfo.fromPlatform()).version;
+      final info = await _updateService.check(current);
+      if (!mounted) return;
+      setState(() {
+        _appVersion = current;
+        _updateInfo = info;
+      });
+      if (info.hasUpdate) {
+        _showUpdateDialog(info);
+      } else if (manual) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Aplikasi sudah versi terbaru')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      if (manual) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal cek update: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
+  }
+
+  Future<void> _showUpdateDialog(UpdateInfo info) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Update tersedia'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Versi saat ini: v${info.currentVersion}'),
+              Text('Versi terbaru: v${info.latestVersion}'),
+              const SizedBox(height: 12),
+              const Text('Catatan rilis:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text(info.notes.isEmpty ? 'Tidak ada catatan rilis.' : info.notes),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Nanti')),
+          FilledButton(
+            onPressed: () async {
+              final url = Uri.parse(info.apkUrl ?? info.releaseUrl);
+              await launchUrl(url, mode: LaunchMode.externalApplication);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Unduh Update'),
+          ),
+        ],
+      ),
+    );
   }
 
   WarungData? get _activeWarung {
@@ -445,7 +527,12 @@ class _HomePageState extends State<HomePage> {
           _buildDashboard(),
           _buildInput(),
           const _PlaceholderTab(title: 'Rekap', icon: Icons.receipt_long),
-          const _PlaceholderTab(title: 'Pengaturan', icon: Icons.settings),
+          _SettingsTab(
+            appVersion: _appVersion,
+            updateInfo: _updateInfo,
+            checking: _checkingUpdate,
+            onCheckUpdate: () => _checkUpdate(manual: true),
+          ),
         ],
       ),
     );
@@ -674,6 +761,94 @@ class _PlaceholderTab extends StatelessWidget {
           const Text('Segera hadir', style: TextStyle(color: Colors.grey)),
         ],
       ),
+    );
+  }
+}
+
+class _SettingsTab extends StatelessWidget {
+  const _SettingsTab({
+    required this.appVersion,
+    required this.updateInfo,
+    required this.checking,
+    required this.onCheckUpdate,
+  });
+
+  final String appVersion;
+  final UpdateInfo? updateInfo;
+  final bool checking;
+  final VoidCallback onCheckUpdate;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasUpdate = updateInfo?.hasUpdate == true;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Aplikasi', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.info_outline),
+                  title: const Text('Versi aplikasi'),
+                  subtitle: Text(appVersion.isEmpty ? '-' : 'v$appVersion'),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(hasUpdate ? Icons.system_update : Icons.verified_outlined,
+                      color: hasUpdate ? Colors.orange : Colors.green),
+                  title: Text(hasUpdate ? 'Update tersedia' : 'Status update'),
+                  subtitle: Text(hasUpdate
+                      ? 'Versi terbaru: v${updateInfo?.latestVersion}'
+                      : (updateInfo == null ? 'Belum dicek' : 'Aplikasi sudah terbaru')),
+                ),
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed: checking ? null : onCheckUpdate,
+                  icon: checking
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.refresh),
+                  label: Text(checking ? 'Mengecek...' : 'Cek Update'),
+                ),
+                if (hasUpdate) ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final url = Uri.parse(updateInfo?.apkUrl ?? updateInfo?.releaseUrl ?? 'https://github.com/aliimron1909/omset-warmad-mobile/releases');
+                      await launchUrl(url, mode: LaunchMode.externalApplication);
+                    },
+                    icon: const Icon(Icons.download),
+                    label: const Text('Unduh Update'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Tentang update', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                const Text(
+                  'Aplikasi mengecek update dari GitHub Releases saat dibuka. '
+                  'Anda juga bisa cek manual lewat tombol di atas. '
+                  'Saat update tersedia, aplikasi akan menampilkan notifikasi dialog.',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

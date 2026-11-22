@@ -6,6 +6,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -68,8 +71,10 @@ jobs:
           grep -Eq '9c94a74a2e73a1b0c9f23302758376b04b990bdc6b74df9184e2fcae867c2d47|9C:94:A7:4A:2E:73:A1:B0:C9:F2:33:02:75:83:76:B0:4B:99:0B:DC:6B:74:DF:91:84:E2:FC:AE:86:7C:2D:47' apksigner.txt
 
       - name: Rename artifact
+        id: meta
         run: |
           VERSION=$(grep -m1 '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           cp build/app/outputs/flutter-apk/app-release.apk \
              "Omset-WarMad-v${VERSION}-arm64-release.apk"
 
@@ -79,3 +84,12 @@ jobs:
           name: Omset-WarMad-arm64-release
           path: Omset-WarMad-v*-arm64-release.apk
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.meta.outputs.version }}
+          name: Omset-WarMad v${{ steps.meta.outputs.version }}
+          generate_release_notes: true
+          files: Omset-WarMad-v*-arm64-release.apk
+          fail_on_unmatched_files: true
