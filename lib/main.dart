@@ -317,6 +317,93 @@ class _HomePageState extends State<HomePage> {
     return [n ?? (cycleOfDate(today, w.settings.cr) ?? 1)];
   }
 
+  Future<void> _showPremiumDialog() async {
+    final controller = TextEditingController();
+    String? error;
+    bool busy = false;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: const Text('Aktifkan Lisensi Premium'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                textCapitalization: TextCapitalization.characters,
+                decoration: const InputDecoration(
+                  labelText: 'Kode lisensi premium',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              if (error != null) ...[
+                const SizedBox(height: 8),
+                Text(error!, style: const TextStyle(color: Colors.red)),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: busy ? null : () => Navigator.pop(ctx),
+              child: const Text('Batal'),
+            ),
+            FilledButton(
+              onPressed: busy
+                  ? null
+                  : () async {
+                      final code = controller.text.trim().toUpperCase();
+                      if (code.isEmpty) {
+                        setD(() => error = 'Kode lisensi wajib diisi');
+                        return;
+                      }
+                      setD(() {
+                        busy = true;
+                        error = null;
+                      });
+                      try {
+                        final dev = widget.state.device ?? '';
+                        final lic = await api.licActivate(code, dev);
+                        if (lic['ok'] != true) {
+                          setD(() {
+                            error = (lic['error'] as String?) ?? 'Kode lisensi tidak valid';
+                            busy = false;
+                          });
+                          return;
+                        }
+                        final reg = await api.syncRegister(code, dev);
+                        if (reg['ok'] == true) {
+                          widget.state.key = (reg['key'] as String?) ?? widget.state.key;
+                        }
+                        widget.state.premium = true;
+                        await widget.store.save(widget.state);
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx);
+                        if (mounted) {
+                          setState(() => _info = 'Lisensi premium aktif');
+                          _sync();
+                        }
+                      } catch (e) {
+                        setD(() {
+                          error = e.toString();
+                          busy = false;
+                        });
+                      }
+                    },
+              child: busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Aktifkan'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final st = widget.state;
@@ -403,13 +490,6 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Omset-WarMad'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _busy ? null : _sync,
-            tooltip: 'Sinkronkan',
-          ),
-        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _busy ? null : _sync,
@@ -422,14 +502,19 @@ class _HomePageState extends State<HomePage> {
           children: [
             Card(
               child: ListTile(
-                leading: const Icon(Icons.cloud_done),
+                leading: Icon(st.premium ? Icons.workspace_premium : Icons.cloud_done),
                 title: Text(st.premium ? 'Premium aktif' : 'Akun gratis'),
                 subtitle: Text(
                   st.lastSync == null
                       ? 'Belum pernah sinkron'
                       : 'Sinkron terakhir: ${st.lastSync!.toLocal()}',
                 ),
-                trailing: Text('rev ${st.rev ?? '-'}'),
+                trailing: st.premium
+                    ? Text('rev ${st.rev ?? '-'}')
+                    : TextButton(
+                        onPressed: _busy ? null : _showPremiumDialog,
+                        child: const Text('Aktifkan Lisensi Premium'),
+                      ),
               ),
             ),
             if (_info != null)
