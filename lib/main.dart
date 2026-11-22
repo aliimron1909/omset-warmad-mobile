@@ -862,23 +862,11 @@ class _InputTabState extends State<InputTab> {
     }
 
     final ac = cycleOfDate(_date, w.settings.cr);
-    int cycle;
-    int day;
-    if (ac != null) {
-      cycle = ac;
-      final sp = cycSpan(ac, w.settings.cr);
-      day = sp == null ? 1 : (diffD(sp.s, _date) + 1).clamp(1, 31);
-    } else if (_editDate != null) {
-      final old = w.records.firstWhere((r) => r.date == _editDate,
-          orElse: () => OmRecord(date: _date, cycle: 1, day: 1, omset: 0));
-      cycle = old.cycle;
-      day = old.day.clamp(1, 31);
-    } else {
-      final maxCycle = w.records.isEmpty ? 1 : w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b);
-      cycle = maxCycle;
-      final inC = w.records.where((r) => r.cycle == cycle).length;
-      day = (inC + 1).clamp(1, 31);
-    }
+    final autoSp = ac != null ? cycSpan(ac, w.settings.cr) : null;
+    final autoCycle = ac ?? (w.records.isEmpty ? 1 : w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b));
+    final autoDay = ac != null && autoSp != null ? (diffD(autoSp.s, _date) + 1).clamp(1, 31) : 1;
+    final cycle = int.tryParse(_cycleCtrl.text.trim()) ?? autoCycle;
+    final day = (int.tryParse(_dayCtrl.text.trim()) ?? autoDay).clamp(1, 31);
 
     final rec = OmRecord(
       date: _date,
@@ -949,29 +937,17 @@ class _InputTabState extends State<InputTab> {
       return const Center(child: Text('Belum ada warung. Sinkronkan dulu dari Dashboard.'));
     }
 
+    if (_cycleCtrl.text.isEmpty || _dayCtrl.text.isEmpty) _syncCycleDay(w, _date);
     final ac = cycleOfDate(_date, w.settings.cr);
     final auto = ac != null;
     final sp = auto ? cycSpan(ac!, w.settings.cr) : null;
-    int cycle;
-    int day;
-    if (auto) {
-      cycle = ac!;
-      day = sp == null ? 1 : (diffD(sp.s, _date) + 1).clamp(1, 31);
-    } else if (_editDate != null) {
-      final oldRec = w.records.firstWhere((r) => r.date == _editDate,
-          orElse: () => OmRecord(date: _date, cycle: 1, day: 1, omset: 0));
-      cycle = oldRec.cycle;
-      day = oldRec.day.clamp(1, 31);
-    } else {
-      final maxCycle = w.records.isEmpty ? 1 : w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b);
-      cycle = maxCycle;
-      final inC = w.records.where((r) => r.cycle == cycle).length;
-      day = (inC + 1).clamp(1, 31);
-    }
+    final cycle = int.tryParse(_cycleCtrl.text.trim()) ?? (ac ?? (w.records.isEmpty ? 1 : w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b)));
+    final day = int.tryParse(_dayCtrl.text.trim()) ?? 1;
     final existing = w.records.where((r) => r.date == _date && r.date != _editDate).toList();
     final miss = _missingDates(w, cycle);
     final preview = _parseRp(_omsetCtrl.text) * w.settings.pct / 100;
-    final runningCycle = cycleOfDate(_today(), w.settings.cr) ?? 1;
+    final runningCycle = cycleOfDate(_today(), w.settings.cr) ??
+        (w.records.isEmpty ? 1 : w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b));
     final recent = w.records.where((r) => r.cycle == runningCycle).toList()
       ..sort((a, b) => b.date.compareTo(a.date));
 
@@ -1084,22 +1060,26 @@ class _InputTabState extends State<InputTab> {
                 Row(
                   children: [
                     Expanded(
-                      child: InputDecorator(
+                      child: TextField(
+                        controller: _cycleCtrl,
+                        keyboardType: TextInputType.number,
                         decoration: InputDecoration(
                           labelText: 'Siklus Ke-',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
-                        child: Text('$cycle'),
+                        onChanged: (_) => setState(() {}),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: InputDecorator(
+                      child: TextField(
+                        controller: _dayCtrl,
+                        keyboardType: TextInputType.number,
                         decoration: InputDecoration(
                           labelText: 'Hari Ke-${auto && sp != null ? ' (1–${sp.len})' : ''}',
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
-                        child: Text('$day'),
+                        onChanged: (_) => setState(() {}),
                       ),
                     ),
                   ],
@@ -1107,7 +1087,7 @@ class _InputTabState extends State<InputTab> {
                 if (auto && sp != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
-                    child: Text('Siklus $cycle: ${sp.s} s/d ${sp.e} (${sp.len} hari). Otomatis mengikuti tanggal.',
+                    child: Text('Siklus $cycle: ${sp.s} s/d ${sp.e} (${sp.len} hari). Otomatis mengikuti tanggal, bisa diedit.',
                         style: const TextStyle(fontSize: 12, color: Color(0xFF0F5C4D))),
                   ),
                 const SizedBox(height: 12),
