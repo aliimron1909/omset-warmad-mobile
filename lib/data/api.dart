@@ -13,7 +13,7 @@ class ApiException implements Exception {
 
 class ApiClient {
   ApiClient({String? baseUrl, http.Client? client})
-      : baseUrl = baseUrl ?? 'https://omsetwarmad.click',
+      : baseUrl = baseUrl ?? 'https://www.omsetwarmad.click',
         _client = client ?? http.Client();
 
   final String baseUrl;
@@ -21,16 +21,27 @@ class ApiClient {
 
   Future<Map<String, dynamic>> post(
       String path, Map<String, dynamic> body) async {
-    late final http.Response r;
+    var uri = Uri.parse('$baseUrl$path');
+    final payload = jsonEncode(body);
+    const headers = {
+      'Content-Type': 'text/plain;charset=utf-8',
+      'Accept': 'application/json',
+    };
+    http.Response r;
     try {
-      r = await _client.post(
-        Uri.parse('$baseUrl$path'),
-        headers: const {
-          'Content-Type': 'text/plain;charset=utf-8',
-          'Accept': 'application/json',
-        },
-        body: jsonEncode(body),
-      ).timeout(const Duration(seconds: 25));
+      r = await _client
+          .post(uri, headers: headers, body: payload)
+          .timeout(const Duration(seconds: 25));
+      // Beberapa host mengembalikan 307/308 (mis. apex -> www). Ikuti sekali.
+      if (_isRedirect(r.statusCode)) {
+        final location = r.headers['location'];
+        if (location != null && location.isNotEmpty) {
+          uri = uri.resolve(location);
+          r = await _client
+              .post(uri, headers: headers, body: payload)
+              .timeout(const Duration(seconds: 25));
+        }
+      }
     } on http.ClientException catch (e) {
       throw ApiException('Gagal menghubungi server: ${e.message}');
     } on Exception catch (e) {
@@ -50,6 +61,8 @@ class ApiClient {
       throw ApiException('Balasan server rusak');
     }
   }
+
+  static bool _isRedirect(int status) => status == 307 || status == 308;
 
   // ---------- sync ----------
   Future<Map<String, dynamic>> syncRegister(String code, String device) =>
