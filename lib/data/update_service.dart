@@ -1,5 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 
 class UpdateInfo {
   final String currentVersion;
@@ -28,6 +31,7 @@ class UpdateService {
   final http.Client _client;
   final String owner;
   final String repo;
+  static const _updateChannel = MethodChannel('warmad/update');
 
   Future<UpdateInfo> check(String currentVersion) async {
     final uri = Uri.https('api.github.com', '/repos/$owner/$repo/releases/latest');
@@ -65,6 +69,34 @@ class UpdateService {
       notes: notes.trim(),
       hasUpdate: _isNewer(latest, currentVersion),
     );
+  }
+
+  Future<File> downloadApk(String url, {void Function(int received, int total)? onProgress}) async {
+    final dir = await getExternalStorageDirectory() ?? await getTemporaryDirectory();
+    final updatesDir = Directory('${dir.path}/updates');
+    if (!await updatesDir.exists()) await updatesDir.create(recursive: true);
+    final name = Uri.parse(url).pathSegments.isNotEmpty ? Uri.parse(url).pathSegments.last : 'update.apk';
+    final file = File('${updatesDir.path}/$name');
+    final req = http.Request('GET', Uri.parse(url));
+    req.headers['User-Agent'] = 'Omset-WarMad-Updater';
+    final res = await _client.send(req);
+    if (res.statusCode != 200) {
+      throw Exception('Gagal mengunduh update (${res.statusCode})');
+    }
+    final total = res.contentLength ?? 0;
+    var received = 0;
+    final sink = file.openWrite();
+    await for (final chunk in res.stream) {
+      sink.add(chunk);
+      received += chunk.length;
+      onProgress?.call(received, total);
+    }
+    await sink.close();
+    return file;
+  }
+
+  Future<void> installApk(File file) async {
+    await _updateChannel.invokeMethod('installApk', {'path': file.path});
   }
 
   static bool _isNewer(String latest, String current) {

@@ -97,14 +97,21 @@ class _SetupPageState extends State<SetupPage> {
   String _mode = 'owner'; // premium | owner | employee
   String? _error;
 
+  bool _looksLikeEmail(String s) => RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(s.trim());
+
   Future<void> _activate() async {
-    final code = _controller.text.trim().toUpperCase();
+    final raw = _controller.text.trim();
+    final code = raw.toUpperCase();
     if (code.isEmpty) {
       if (_mode == 'owner') {
         await _startLocalFree();
         return;
       }
       setState(() => _error = 'Kode wajib diisi');
+      return;
+    }
+    if (_mode == 'premium' && _looksLikeEmail(raw)) {
+      setState(() => _error = 'Login dengan email/kode verifikasi belum tersedia di aplikasi ini. Silakan masukkan Kode Lisensi Premium. Untuk bantuan login email, hubungi admin.');
       return;
     }
     setState(() {
@@ -171,10 +178,18 @@ class _SetupPageState extends State<SetupPage> {
     final r = await api.syncRegister(code, widget.device);
     if (r['ok'] != true) {
       final msg = (r['error'] as String?) ?? 'Kode tidak valid';
-      if (msg.toLowerCase().contains('belum terdaftar untuk lisensi')) {
+      final low = msg.toLowerCase();
+      if (low.contains('belum terdaftar untuk lisensi')) {
         setState(() {
-          _error =
-              '$msg\n\nJika ini kode lisensi premium, pilih opsi "Email atau Kode Premium" di atas lalu coba lagi.';
+          _error = '$msg\n\nJika ini kode lisensi premium, pilih opsi "Email atau Kode Premium" di atas lalu coba lagi.';
+        });
+        return;
+      }
+      if (low.contains('tidak ditemukan') || low.contains('not found') || low.contains('tidak valid') || low.contains('invalid')) {
+        setState(() {
+          _error = isEmployee
+              ? 'Kode karyawan tidak ditemukan. Periksa kembali kode dari pemilik warung, pastikan kode belum dicabut, dan pemilik memiliki akses Premium aktif.'
+              : 'Kode akses tidak ditemukan. Periksa kembali kode Anda. Jika ini kode lisensi premium, pilih opsi "Email atau Kode Premium".';
         });
         return;
       }
@@ -397,15 +412,67 @@ class _HomePageState extends State<HomePage> {
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Nanti')),
           FilledButton(
             onPressed: () async {
-              final url = Uri.parse(info.apkUrl ?? info.releaseUrl);
-              await launchUrl(url, mode: LaunchMode.externalApplication);
-              if (ctx.mounted) Navigator.pop(ctx);
+              Navigator.pop(ctx);
+              await _installUpdate(info);
             },
-            child: const Text('Unduh Update'),
+            child: const Text('Unduh & Pasang'),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _installUpdate(UpdateInfo info) async {
+    final url = info.apkUrl;
+    if (url == null || url.isEmpty) {
+      final fallback = Uri.parse(info.releaseUrl);
+      await launchUrl(fallback, mode: LaunchMode.externalApplication);
+      return;
+    }
+    if (!mounted) return;
+    double progress = 0;
+    String status = 'Menyiapkan unduhan...';
+    bool done = false;
+    String? err;
+    StateSetter? setD;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, sd) {
+        setD = sd;
+        return AlertDialog(
+          title: const Text('Mengunduh update'),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(status),
+            const SizedBox(height: 12),
+            if (err == null) LinearProgressIndicator(value: done ? 1 : (progress > 0 ? progress : null)),
+            if (err != null) ...[
+              const SizedBox(height: 8),
+              Text(err!, style: const TextStyle(color: Color(0xFFC0392B), fontSize: 13)),
+            ],
+          ]),
+          actions: [
+            if (err != null) TextButton(onPressed: () async {
+              final fb = Uri.parse(info.releaseUrl);
+              await launchUrl(fb, mode: LaunchMode.externalApplication);
+            }, child: const Text('Buka Browser')),
+            if (err != null || done) TextButton(onPressed: () => Navigator.pop(ctx), child: Text(done ? 'Tutup' : 'Batal')),
+          ],
+        );
+      }),
+    );
+    try {
+      final file = await _updateService.downloadApk(url, onProgress: (r, t) {
+        final p = t > 0 ? r / t : 0.0;
+        final mb = (r / 1048576).toStringAsFixed(1);
+        final mbt = t > 0 ? (t / 1048576).toStringAsFixed(1) : '?';
+        setD?.call(() { progress = p; status = 'Mengunduh $mb / $mbt MB'; });
+      });
+      setD?.call(() { progress = 1; status = 'Membuka pemasang...'; done = true; });
+      await _updateService.installApk(file);
+    } catch (e) {
+      setD?.call(() { err = e.toString(); status = 'Gagal memperbarui'; });
+    }
   }
 
   WarungData? get _activeWarung {
@@ -601,6 +668,8 @@ class _HomePageState extends State<HomePage> {
               if (mounted) setState(() => _info = 'Pengaturan tersimpan');
               _sync();
             },
+            store: widget.store,
+            onInstallUpdate: _installUpdate,
           ),
         ],
       ),
@@ -852,6 +921,8 @@ class _SettingsTab extends StatefulWidget {
     required this.activeWarung,
     required this.onWarungChanged,
     required this.onSaved,
+    required this.store,
+    required this.onInstallUpdate,
   });
 
   final String appVersion;
@@ -862,6 +933,8 @@ class _SettingsTab extends StatefulWidget {
   final WarungData? activeWarung;
   final ValueChanged<String> onWarungChanged;
   final Future<void> Function() onSaved;
+  final SyncStore store;
+  final Future<void> Function(UpdateInfo info) onInstallUpdate;
 
   @override
   State<_SettingsTab> createState() => _SettingsTabState();
@@ -1015,6 +1088,53 @@ class _SettingsTabState extends State<_SettingsTab> {
     );
   }
 
+  Future<void> _logout() async {
+    bool deleteLocal = false;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setD) => AlertDialog(
+        title: const Text('Keluar dari akun?'),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Anda akan keluar dari sesi/aktivasi di perangkat ini dan kembali ke halaman awal.'),
+          const SizedBox(height: 12),
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            value: deleteLocal,
+            onChanged: (v) => setD(() => deleteLocal = v == true),
+            title: const Text('Hapus juga data lokal di perangkat ini', style: TextStyle(fontSize: 13)),
+            controlAffinity: ListTileControlAffinity.leading,
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFC0392B)),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Keluar'),
+          ),
+        ],
+      )),
+    );
+    if (ok != true || !mounted) return;
+    final st = widget.state;
+    st.key = null;
+    st.premium = false;
+    st.rev = null;
+    st.lastSync = null;
+    st.role = 'pemilik';
+    st.akses = [];
+    if (deleteLocal) {
+      st.warung = [WarungData(id: 'w1')];
+      st.deletedWarung = [];
+    }
+    await widget.store.save(st);
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => SetupPage(state: st, device: st.device ?? '', store: widget.store)),
+      (_) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasUpdate = widget.updateInfo?.hasUpdate == true;
@@ -1148,12 +1268,9 @@ class _SettingsTabState extends State<_SettingsTab> {
                 if (hasUpdate) ...[
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
-                    onPressed: () async {
-                      final url = Uri.parse(widget.updateInfo?.apkUrl ?? widget.updateInfo?.releaseUrl ?? 'https://github.com/aliimron1909/omset-warmad-mobile/releases');
-                      await launchUrl(url, mode: LaunchMode.externalApplication);
-                    },
+                    onPressed: widget.updateInfo == null ? null : () => widget.onInstallUpdate(widget.updateInfo!),
                     icon: const Icon(Icons.download),
-                    label: const Text('Unduh Update'),
+                    label: const Text('Unduh & Pasang Update'),
                   ),
                 ],
               ],
@@ -1172,7 +1289,26 @@ class _SettingsTabState extends State<_SettingsTab> {
                 const Text(
                   'Aplikasi mengecek update dari GitHub Releases saat dibuka. '
                   'Anda juga bisa cek manual lewat tombol di atas. '
-                  'Saat update tersedia, aplikasi akan menampilkan notifikasi dialog.',
+                  'Saat update tersedia, aplikasi dapat mengunduh dan memasang pembaruan langsung dari aplikasi.',
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text('Sesi', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: _logout,
+                  style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFC0392B), side: const BorderSide(color: Color(0xFFC0392B))),
+                  icon: const Icon(Icons.logout),
+                  label: const Text('Keluar'),
                 ),
               ],
             ),
@@ -2097,7 +2233,7 @@ class _InputTabState extends State<InputTab> {
                           contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                         ),
-                        items: allCycles.reversed.map((c) => DropdownMenuItem(value: c, child: Text('Siklus $c${c == lastCycle ? ' (terakhir)' : ''}'))).toList(),
+                        items: allCycles.reversed.map((c) => DropdownMenuItem(value: c, child: Text('Siklus $c'))).toList(),
                         onChanged: (v) {
                           if (v == null) return;
                           setState(() => _historyCycle = v);
