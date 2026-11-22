@@ -334,7 +334,7 @@ class _HomePageState extends State<HomePage> {
   final UpdateService _updateService = UpdateService();
   bool _busy = false;
   String? _info;
-  String _cycleSel = 'running'; // running | all | <cycle number>
+  String _cycleSel = 'last'; // last | all | <cycle number>
   int _tab = 0;
   String? _activeWarungId;
   String _appVersion = '';
@@ -534,11 +534,12 @@ class _HomePageState extends State<HomePage> {
       if (cs.isNotEmpty) return cs;
       return [cycleOfDate(today, w.settings.cr) ?? 1];
     }
-    if (_cycleSel == 'running') {
-      return [cycleOfDate(today, w.settings.cr) ?? 1];
+    final last = w.records.isEmpty ? null : (w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b));
+    if (_cycleSel == 'last' || _cycleSel == 'running') {
+      return [last ?? (cycleOfDate(today, w.settings.cr) ?? 1)];
     }
     final n = int.tryParse(_cycleSel);
-    return [n ?? (cycleOfDate(today, w.settings.cr) ?? 1)];
+    return [n ?? last ?? (cycleOfDate(today, w.settings.cr) ?? 1)];
   }
 
   Future<void> _showPremiumDialog() async {
@@ -746,16 +747,18 @@ class _HomePageState extends State<HomePage> {
     final dailyDates = daily.keys.toList()..sort();
 
     final cycleItems = <DropdownMenuItem<String>>[
-      const DropdownMenuItem(value: 'running', child: Text('Siklus berjalan')),
       const DropdownMenuItem(value: 'all', child: Text('Semua siklus')),
       ...allCycles.map((c) => DropdownMenuItem(value: '$c', child: Text('Siklus $c'))),
     ];
+    final lastOverall = allCycles.isNotEmpty ? allCycles.last : null;
+    final effectiveSel = (_cycleSel == 'last' || _cycleSel == 'running')
+        ? (lastOverall != null ? '$lastOverall' : (cycleItems.any((i) => i.value == 'all') ? 'all' : 'all'))
+        : _cycleSel;
+    final effectiveValue = cycleItems.any((i) => i.value == effectiveSel)
+        ? effectiveSel
+        : (lastOverall != null ? '$lastOverall' : 'all');
 
-    final selLabel = _cycleSel == 'running'
-        ? 'Siklus berjalan'
-        : _cycleSel == 'all'
-            ? 'Semua siklus'
-            : 'Siklus $_cycleSel';
+    final selLabel = effectiveValue == 'all' ? 'Semua siklus' : 'Siklus $effectiveValue';
 
     return RefreshIndicator(
       onRefresh: _sync,
@@ -792,14 +795,14 @@ class _HomePageState extends State<HomePage> {
             ),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
-            value: cycleItems.any((i) => i.value == _cycleSel) ? _cycleSel : 'running',
+            value: effectiveValue,
             decoration: InputDecoration(
               labelText: 'Tampilkan siklus',
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
             ),
             items: cycleItems,
-            onChanged: (v) => setState(() => _cycleSel = v ?? 'running'),
+            onChanged: (v) => setState(() => _cycleSel = v ?? (lastOverall != null ? '$lastOverall' : 'all')),
           ),
           const SizedBox(height: 12),
           _TotalCard(boss: boss, bs: bs, kt: kt, sb: sb, nst: nst, anyBagi: anyBagi, rupiah: _rupiah),
