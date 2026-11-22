@@ -100,6 +100,10 @@ class _SetupPageState extends State<SetupPage> {
   Future<void> _activate() async {
     final code = _controller.text.trim().toUpperCase();
     if (code.isEmpty) {
+      if (_mode == 'owner') {
+        await _startLocalFree();
+        return;
+      }
       setState(() => _error = 'Kode wajib diisi');
       return;
     }
@@ -113,6 +117,26 @@ class _SetupPageState extends State<SetupPage> {
       } else {
         await _activateAccessCode(code, isEmployee: _mode == 'employee');
       }
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _startLocalFree() async {
+    setState(() { _busy = true; _error = null; });
+    try {
+      widget.state.key = null;
+      widget.state.premium = false;
+      if (widget.state.warung.isEmpty) {
+        widget.state.warung.add(WarungData(id: 'w1'));
+      }
+      await widget.store.save(widget.state);
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => HomePage(state: widget.state, store: widget.store)),
+      );
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -238,22 +262,24 @@ class _SetupPageState extends State<SetupPage> {
             value: 'owner',
             icon: Icons.storefront_outlined,
             title: 'Pemilik Warung',
-            desc: 'Untuk pemilik warung. Bisa mulai gratis, lalu aktifkan lisensi premium kapan saja dari Pengaturan.',
+            desc: 'Gratis untuk 1 warung. Data disimpan di HP ini. Bisa hubungkan kode akses atau aktifkan Premium nanti dari Pengaturan.',
           ),
           _modeCard(
             value: 'employee',
             icon: Icons.badge_outlined,
             title: 'Karyawan',
-            desc: 'Untuk karyawan yang sudah mendapat kode dari pemilik warung. Bisa juga masuk lewat tautan yang dibagikan pemilik (jika tersedia).',
+            desc: 'Untuk karyawan yang sudah mendapat kode dari pemilik warung (fitur Premium). Bisa juga masuk lewat tautan yang dibagikan pemilik (jika tersedia).',
           ),
           const SizedBox(height: 20),
           TextField(
             controller: _controller,
             textCapitalization: TextCapitalization.characters,
+            onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
-              labelText: label,
+              labelText: _mode == 'owner' ? 'Kode Akses (opsional)' : label,
               border: const OutlineInputBorder(),
               prefixIcon: Icon(icon),
+              helperText: _mode == 'owner' ? 'Kosongkan jika ingin mulai gratis dan simpan data di HP.' : null,
             ),
             onSubmitted: (_) => _busy ? null : _activate(),
           ),
@@ -270,7 +296,7 @@ class _SetupPageState extends State<SetupPage> {
                     width: 20,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Text('Aktifkan'),
+                : Text(_mode == 'owner' && _controller.text.trim().isEmpty ? 'Mulai Gratis (Simpan di HP)' : 'Aktifkan'),
           ),
         ],
       ),
@@ -390,6 +416,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _sync() async {
+    final hasKey = (widget.state.key ?? '').isNotEmpty;
+    if (!hasKey) {
+      setState(() => _info = 'Mode lokal: data tersimpan di HP. Hubungkan kode akses atau aktifkan Premium untuk sync cloud.');
+      return;
+    }
     setState(() {
       _busy = true;
       _info = null;
@@ -664,16 +695,18 @@ class _HomePageState extends State<HomePage> {
         children: [
           Card(
             child: ListTile(
-              leading: Icon(st.premium ? Icons.workspace_premium : Icons.cloud_done),
-              title: Text(st.premium ? 'Premium aktif' : 'Akun gratis'),
+              leading: Icon(st.premium ? Icons.workspace_premium : ((st.key ?? '').isNotEmpty ? Icons.cloud_done : Icons.phone_android)),
+              title: Text(st.premium ? 'Premium aktif' : ((st.key ?? '').isNotEmpty ? 'Akun gratis' : 'Gratis (Data di HP)')),
               subtitle: Text(
-                st.lastSync == null
-                    ? 'Belum pernah sinkron'
-                    : () {
-                        final t = st.lastSync!.toLocal();
-                        String p2(int n) => n.toString().padLeft(2, '0');
-                        return 'Sinkron terakhir: ${t.year}-${p2(t.month)}-${p2(t.day)} ${p2(t.hour)}:${p2(t.minute)}';
-                      }(),
+                st.premium || (st.key ?? '').isNotEmpty
+                    ? (st.lastSync == null
+                        ? 'Belum pernah sinkron'
+                        : () {
+                            final t = st.lastSync!.toLocal();
+                            String p2(int n) => n.toString().padLeft(2, '0');
+                            return 'Sinkron terakhir: ${t.year}-${p2(t.month)}-${p2(t.day)} ${p2(t.hour)}:${p2(t.minute)}';
+                          }())
+                    : 'Data tersimpan di perangkat ini. Hubungkan kode untuk sync cloud.',
               ),
               trailing: st.premium
                   ? null
@@ -910,13 +943,114 @@ class _SettingsTabState extends State<_SettingsTab> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Aturan siklus disimpan')));
   }
 
+  Future<void> _connectAccessCode() async {
+    final ctrl = TextEditingController();
+    String? err;
+    bool busy = false;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setD) => AlertDialog(
+        title: const Text('Hubungkan Kode Akses'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Masukkan kode akses pemilik/warung untuk sync cloud.', style: TextStyle(fontSize: 13)),
+          const SizedBox(height: 12),
+          TextField(controller: ctrl, textCapitalization: TextCapitalization.characters, decoration: const InputDecoration(labelText: 'Kode akses', border: OutlineInputBorder())),
+          if (err != null) ...[const SizedBox(height: 8), Text(err!, style: const TextStyle(color: Colors.red, fontSize: 12))],
+        ]),
+        actions: [
+          TextButton(onPressed: busy ? null : () => Navigator.pop(ctx), child: const Text('Batal')),
+          FilledButton(onPressed: busy ? null : () async {
+            final code = ctrl.text.trim().toUpperCase();
+            if (code.isEmpty) { setD(() => err = 'Kode wajib diisi'); return; }
+            setD(() { busy = true; err = null; });
+            try {
+              final r = await api.syncRegister(code, widget.state.device ?? '');
+              if (r['ok'] != true) { setD(() { err = (r['error'] as String?) ?? 'Kode tidak valid'; busy = false; }); return; }
+              widget.state.key = (r['key'] as String?) ?? code;
+              await widget.onSaved();
+              if (!ctx.mounted) return;
+              Navigator.pop(ctx);
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Kode akses terhubung. Sync akan berjalan.')));
+            } catch (e) { setD(() { err = e.toString(); busy = false; }); }
+          }, child: busy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Hubungkan')),
+        ],
+      )),
+    );
+  }
+
+  Future<void> _activatePremium() async {
+    final ctrl = TextEditingController();
+    String? err;
+    bool busy = false;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setD) => AlertDialog(
+        title: const Text('Aktifkan Lisensi Premium'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Masukkan kode lisensi premium Anda.', style: TextStyle(fontSize: 13)),
+          const SizedBox(height: 12),
+          TextField(controller: ctrl, textCapitalization: TextCapitalization.characters, decoration: const InputDecoration(labelText: 'Kode lisensi premium', border: OutlineInputBorder())),
+          if (err != null) ...[const SizedBox(height: 8), Text(err!, style: const TextStyle(color: Colors.red, fontSize: 12))],
+        ]),
+        actions: [
+          TextButton(onPressed: busy ? null : () => Navigator.pop(ctx), child: const Text('Batal')),
+          FilledButton(onPressed: busy ? null : () async {
+            final code = ctrl.text.trim().toUpperCase();
+            if (code.isEmpty) { setD(() => err = 'Kode wajib diisi'); return; }
+            setD(() { busy = true; err = null; });
+            try {
+              final lic = await api.licActivate(code, widget.state.device ?? '');
+              if (lic['ok'] != true) { setD(() { err = (lic['error'] as String?) ?? 'Kode lisensi tidak valid'; busy = false; }); return; }
+              final reg = await api.syncRegister(code, widget.state.device ?? '');
+              if (reg['ok'] == true) widget.state.key = (reg['key'] as String?) ?? widget.state.key;
+              widget.state.premium = true;
+              await widget.onSaved();
+              if (!ctx.mounted) return;
+              Navigator.pop(ctx);
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Lisensi premium aktif')));
+            } catch (e) { setD(() { err = e.toString(); busy = false; }); }
+          }, child: busy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Aktifkan')),
+        ],
+      )),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasUpdate = widget.updateInfo?.hasUpdate == true;
     final w = widget.activeWarung;
+    final hasKey = (widget.state.key ?? '').isNotEmpty;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Akun & Sync', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text(
+                  widget.state.premium
+                      ? 'Premium aktif. Data dapat disinkronkan ke cloud.'
+                      : hasKey
+                          ? 'Akun terhubung. Data dapat disinkronkan ke cloud.'
+                          : 'Mode lokal gratis: data tersimpan di HP ini. Hubungkan kode akses atau aktifkan Premium untuk sync cloud.',
+                  style: const TextStyle(fontSize: 13, color: Colors.black54),
+                ),
+                const SizedBox(height: 12),
+                Wrap(spacing: 8, runSpacing: 8, children: [
+                  if (!widget.state.premium)
+                    FilledButton.icon(onPressed: _activatePremium, icon: const Icon(Icons.workspace_premium), label: const Text('Aktifkan Lisensi Premium')),
+                  if (!hasKey)
+                    OutlinedButton.icon(onPressed: _connectAccessCode, icon: const Icon(Icons.key), label: const Text('Hubungkan Kode Akses')),
+                ]),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
