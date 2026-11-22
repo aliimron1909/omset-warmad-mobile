@@ -257,6 +257,7 @@ class _HomePageState extends State<HomePage> {
   late final SyncEngine _engine;
   bool _busy = false;
   String? _info;
+  String _cycleSel = 'running'; // running | all | <cycle number>
 
   @override
   void initState() {
@@ -269,24 +270,98 @@ class _HomePageState extends State<HomePage> {
       _busy = true;
       _info = null;
     });
-    try {
-      final out = await _engine.sync();
-      if (!mounted) return;
-      setState(() => _info = out.message);
-    } catch (e) {
-      if (mounted) setState(() => _info = e.toString());
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    final r = await _engine.sync(widget.state);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _info = r.message;
+    });
   }
 
-  String _rupiah(num n) =>
-      'Rp${n.round().toString().replaceAllMapped(RegExp(r'(\d{3})(?=\d)'), (m) => '${m[1]}.')}';
+  String _rupiah(num n) {
+    final s = n.round().toString();
+    final b = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      final pos = s.length - i;
+      b.write(s[i]);
+      if (pos > 1 && pos % 3 == 1) b.write('.');
+    }
+    return 'Rp$b';
+  }
+
+  List<int> _allCycles() {
+    final set = <int>{};
+    for (final w in widget.state.warung) {
+      for (final r in w.records) {
+        set.add(r.cycle);
+      }
+    }
+    final list = set.toList()..sort();
+    return list;
+  }
+
+  List<int> _cyclesFor(WarungData w, String today) {
+    if (_cycleSel == 'all') {
+      final cs = w.records.map((r) => r.cycle).toSet().toList()..sort();
+      if (cs.isNotEmpty) return cs;
+      return [cycleOfDate(today, w.settings.cr) ?? 1];
+    }
+    if (_cycleSel == 'running') {
+      return [cycleOfDate(today, w.settings.cr) ?? 1];
+    }
+    final n = int.tryParse(_cycleSel);
+    return [n ?? (cycleOfDate(today, w.settings.cr) ?? 1)];
+  }
 
   @override
   Widget build(BuildContext context) {
     final st = widget.state;
     final today = DateTime.now().toString().substring(0, 10);
+    final allCycles = _allCycles();
+
+    // Agregasi total seperti web r1()
+    double boss = 0, bs = 0, kt = 0, sb = 0, omset = 0, tab = 0, sel = 0;
+    var nst = 0;
+    var anyBagi = false;
+    for (final w in st.warung) {
+      for (final c in _cyclesFor(w, today)) {
+        final x = calc(
+          c,
+          records: w.records,
+          s: w.settings,
+          jm: w.jagaModes,
+          cn: w.cycleNames,
+          pg: w.cyclePenjaga,
+          ko: w.kontrakOptions,
+          sk: w.cycleStok,
+          today: today,
+        );
+        boss += x.bossT;
+        bs += x.bossShare;
+        kt += x.kontrak;
+        sb += x.stBoss;
+        omset += x.omset;
+        tab += x.tab;
+        if (x.nBagi > 0 || x.gajiTotal == 0) anyBagi = true;
+        if (x.stok != null) {
+          sel += x.stok!.sel;
+          nst++;
+        }
+      }
+    }
+
+    final cycleItems = <DropdownMenuItem<String>>[
+      const DropdownMenuItem(value: 'running', child: Text('Siklus berjalan')),
+      const DropdownMenuItem(value: 'all', child: Text('Semua siklus')),
+      ...allCycles.map((c) => DropdownMenuItem(value: '$c', child: Text('Siklus $c'))),
+    ];
+
+    final selLabel = _cycleSel == 'running'
+        ? 'Siklus berjalan'
+        : _cycleSel == 'all'
+            ? 'Semua siklus'
+            : 'Siklus $_cycleSel';
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Omset-WarMad'),
@@ -325,8 +400,44 @@ class _HomePageState extends State<HomePage> {
                 child: Text(_info!, style: const TextStyle(color: Colors.grey)),
               ),
             const SizedBox(height: 8),
-            const Text('Rekap siklus berjalan',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            DropdownButtonFormField<String>(
+              value: cycleItems.any((i) => i.value == _cycleSel) ? _cycleSel : 'running',
+              decoration: const InputDecoration(
+                labelText: 'Tampilkan siklus',
+                border: OutlineInputBorder(),
+              ),
+              items: cycleItems,
+              onChanged: (v) => setState(() => _cycleSel = v ?? 'running'),
+            ),
+            const SizedBox(height: 12),
+            _TotalCard(
+              boss: boss,
+              bs: bs,
+              kt: kt,
+              sb: sb,
+              nst: nst,
+              anyBagi: anyBagi,
+              rupiah: _rupiah,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(child: _SmallStat(label: 'Omset Kotor', value: _rupiah(omset))),
+                const SizedBox(width: 8),
+                Expanded(child: _SmallStat(label: 'Tabungan', value: _rupiah(tab))),
+              ],
+            ),
+            if (nst > 0) ...[
+              const SizedBox(height: 8),
+              _SmallStat(
+                label: 'Selisih Stok',
+                value: '${sel < 0 ? '-' : '+'} ${_rupiah(sel.abs())}',
+                valueColor: sel >= 0 ? const Color(0xFF1F9D55) : const Color(0xFFC0392B),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Text('Rekap warung · $selLabel',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             if (st.warung.isEmpty)
               const Card(
@@ -342,7 +453,88 @@ class _HomePageState extends State<HomePage> {
                   warung: w,
                   today: today,
                   rupiah: _rupiah,
+                  cycles: _cyclesFor(w, today),
                 )),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TotalCard extends StatelessWidget {
+  const _TotalCard({
+    required this.boss,
+    required this.bs,
+    required this.kt,
+    required this.sb,
+    required this.nst,
+    required this.anyBagi,
+    required this.rupiah,
+  });
+
+  final double boss;
+  final double bs;
+  final double kt;
+  final double sb;
+  final int nst;
+  final bool anyBagi;
+  final String Function(num) rupiah;
+
+  @override
+  Widget build(BuildContext context) {
+    final stokLabel = nst > 0 ? ' & Stok' : '';
+    final stokBreak = nst > 0 ? ' ${sb < 0 ? '-' : '+'} Stok ${rupiah(sb.abs())}' : '';
+    return Card(
+      color: const Color(0xFF0F5C4D),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Total Pendapatan Pemilik Warung (+ Kontrak$stokLabel)',
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              rupiah(boss),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 30,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${anyBagi ? 'Bagi hasil' : 'Sisa setelah gaji'} ${rupiah(bs)} + Kontrak ${rupiah(kt)}$stokBreak',
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SmallStat extends StatelessWidget {
+  const _SmallStat({required this.label, required this.value, this.valueColor});
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 4),
+            Text(value,
+                style: TextStyle(fontWeight: FontWeight.bold, color: valueColor)),
           ],
         ),
       ),
@@ -355,26 +547,48 @@ class _WarungCard extends StatelessWidget {
     required this.warung,
     required this.today,
     required this.rupiah,
+    required this.cycles,
   });
 
   final WarungData warung;
   final String today;
   final String Function(num) rupiah;
+  final List<int> cycles;
 
   @override
   Widget build(BuildContext context) {
-    final c = cycleOfDate(today, warung.settings.cr) ?? 1;
-    final x = calc(
-      c,
-      records: warung.records,
-      s: warung.settings,
-      jm: warung.jagaModes,
-      cn: warung.cycleNames,
-      pg: warung.cyclePenjaga,
-      ko: warung.kontrakOptions,
-      sk: warung.cycleStok,
-      today: today,
-    );
+    double boss = 0, bs = 0, kt = 0, sb = 0, omset = 0, tab = 0;
+    var nst = 0;
+    var anyBagi = false;
+    int days = 0, len = 0;
+    for (final c in cycles) {
+      final x = calc(
+        c,
+        records: warung.records,
+        s: warung.settings,
+        jm: warung.jagaModes,
+        cn: warung.cycleNames,
+        pg: warung.cyclePenjaga,
+        ko: warung.kontrakOptions,
+        sk: warung.cycleStok,
+        today: today,
+      );
+      boss += x.bossT;
+      bs += x.bossShare;
+      kt += x.kontrak;
+      sb += x.stBoss;
+      omset += x.omset;
+      tab += x.tab;
+      days += x.days;
+      len += x.len;
+      if (x.nBagi > 0 || x.gajiTotal == 0) anyBagi = true;
+      if (x.stok != null) nst++;
+    }
+
+    final cycleLabel = cycles.length == 1
+        ? 'Siklus ${cycles.first}'
+        : '${cycles.length} siklus';
+    final stokBreak = nst > 0 ? ' ${sb < 0 ? '-' : '+'} Stok ${rupiah(sb.abs())}' : '';
 
     return Card(
       child: Padding(
@@ -384,35 +598,30 @@ class _WarungCard extends StatelessWidget {
           children: [
             Text(warung.settings.nama,
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            Text('Siklus $c · ${x.days} dari ${x.len} hari'),
+            Text('$cycleLabel · $days dari $len hari'),
             const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Omset'),
-                Text(rupiah(x.omset)),
-              ],
+              children: [const Text('Omset'), Text(rupiah(omset))],
             ),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('Tabungan (${x.tab.toStringAsFixed(0)}%)'),
-                Text(rupiah(x.tab)),
-              ],
+              children: [const Text('Tabungan'), Text(rupiah(tab))],
             ),
             const Divider(),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Bagian pemilik',
+                const Text('Pendapatan pemilik',
                     style: TextStyle(fontWeight: FontWeight.bold)),
-                Text(rupiah(x.bossT),
+                Text(rupiah(boss),
                     style: const TextStyle(fontWeight: FontWeight.bold)),
               ],
             ),
-            if (x.stok != null)
-              Text('Selisih stok: ${rupiah(x.stok!.sel)}',
-                  style: const TextStyle(color: Colors.grey)),
+            Text(
+              '${anyBagi ? 'Bagi hasil' : 'Sisa setelah gaji'} ${rupiah(bs)} + Kontrak ${rupiah(kt)}$stokBreak',
+              style: const TextStyle(color: Colors.grey, fontSize: 12),
+            ),
           ],
         ),
       ),
