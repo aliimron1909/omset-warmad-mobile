@@ -1294,7 +1294,7 @@ class _InputTabState extends State<InputTab> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Siklus harus angka >= 1')));
       return;
     }
-    final maxDay = (auto && autoSp != null) ? autoSp.len : 31;
+    final maxDay = (ac != null && autoSp != null) ? autoSp.len : 31;
     if (day == null || day < 1 || day > maxDay) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Hari harus 1-$maxDay')));
       return;
