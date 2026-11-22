@@ -934,9 +934,7 @@ class _InputTabState extends State<InputTab> {
         _cycleCtrl.text = '${old.cycle}';
         _dayCtrl.text = '${old.day}';
       } else {
-        final maxCycle = w.records.isEmpty
-            ? 1
-            : w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b);
+        final maxCycle = _allCycleNos(w).last;
         final inC = w.records.where((r) => r.cycle == maxCycle).length;
         _cycleCtrl.text = '$maxCycle';
         _dayCtrl.text = '${(inC + 1).clamp(1, 31)}';
@@ -1038,7 +1036,7 @@ class _InputTabState extends State<InputTab> {
 
     final ac = cycleOfDate(_date, w.settings.cr);
     final autoSp = ac != null ? cycSpan(ac, w.settings.cr) : null;
-    final autoCycle = ac ?? (w.records.isEmpty ? 1 : w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b));
+    final autoCycle = ac ?? _allCycleNos(w).last;
     final autoDay = ac != null && autoSp != null ? (diffD(autoSp.s, _date) + 1).clamp(1, 31) : 1;
     final cycle = int.tryParse(_cycleCtrl.text.trim()) ?? autoCycle;
     final day = (int.tryParse(_dayCtrl.text.trim()) ?? autoDay).clamp(1, 31);
@@ -1080,9 +1078,22 @@ class _InputTabState extends State<InputTab> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Catatan dihapus')));
   }
 
+  List<int> _allCycleNos(WarungData w) {
+    final s = <int>{};
+    for (final r in w.records) s.add(r.cycle);
+    s.addAll(w.jagaModes.keys);
+    s.addAll(w.cycleNames.keys);
+    s.addAll(w.cyclePenjaga.keys);
+    s.addAll(w.cycleStok.keys);
+    s.addAll(w.kontrakOptions.keys);
+    if (s.isEmpty) s.add(1);
+    final list = s.toList()..sort();
+    return list;
+  }
+
   int _lastCycle(WarungData w) {
-    if (w.records.isEmpty) return 1;
-    return w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b);
+    final all = _allCycleNos(w);
+    return all.last;
   }
 
   Future<void> _newCycle(WarungData w) async {
@@ -1133,7 +1144,7 @@ class _InputTabState extends State<InputTab> {
 
   bool _canDeleteCycle(WarungData w, int c) {
     if (w.records.any((r) => r.cycle == c)) return false;
-    final prev = w.records.map((r) => r.cycle).where((x) => x < c).fold<int?>(null, (p, x) => p == null || x > p ? x : p);
+    final prev = _allCycleNos(w).where((x) => x < c).fold<int?>(null, (p, x) => p == null || x > p ? x : p);
     if (prev == null) return false;
     final prevCnt = w.records.where((r) => r.cycle == prev).length;
     return prevCnt < 30;
@@ -1144,7 +1155,7 @@ class _InputTabState extends State<InputTab> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Siklus ini sudah berisi catatan')));
       return;
     }
-    final prev = w.records.map((r) => r.cycle).where((x) => x < c).fold<int?>(null, (p, x) => p == null || x > p ? x : p);
+    final prev = _allCycleNos(w).where((x) => x < c).fold<int?>(null, (p, x) => p == null || x > p ? x : p);
     if (prev == null || w.records.where((r) => r.cycle == prev).length >= 30) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Siklus sebelumnya sudah 30 hari, siklus tidak bisa dihapus')));
       return;
@@ -1209,15 +1220,14 @@ class _InputTabState extends State<InputTab> {
     final ac = cycleOfDate(_date, w.settings.cr);
     final auto = ac != null;
     final sp = auto ? cycSpan(ac!, w.settings.cr) : null;
-    final cycle = int.tryParse(_cycleCtrl.text.trim()) ?? (ac ?? (w.records.isEmpty ? 1 : w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b)));
+    final cycle = int.tryParse(_cycleCtrl.text.trim()) ?? (ac ?? _allCycleNos(w).last);
     final day = int.tryParse(_dayCtrl.text.trim()) ?? 1;
     final existing = w.records.where((r) => r.date == _date && r.date != _editDate).toList();
     final miss = _missingDates(w, cycle);
     final preview = _parseRp(_omsetCtrl.text) * w.settings.pct / 100;
     final lc = _lastCycle(w);
     final canDel = _canDeleteCycle(w, lc);
-    final runningCycle = cycleOfDate(_today(), w.settings.cr) ??
-        (w.records.isEmpty ? 1 : w.records.map((r) => r.cycle).reduce((a, b) => a > b ? a : b));
+    final runningCycle = cycleOfDate(_today(), w.settings.cr) ?? _allCycleNos(w).last;
     final recent = w.records.where((r) => r.cycle == runningCycle).toList()
       ..sort((a, b) => b.date.compareTo(a.date));
 
