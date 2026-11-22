@@ -94,7 +94,7 @@ class SetupPage extends StatefulWidget {
 class _SetupPageState extends State<SetupPage> {
   final _controller = TextEditingController();
   bool _busy = false;
-  bool _premiumLicense = false;
+  String _mode = 'owner'; // premium | owner | employee
   String? _error;
 
   Future<void> _activate() async {
@@ -108,10 +108,10 @@ class _SetupPageState extends State<SetupPage> {
       _error = null;
     });
     try {
-      if (_premiumLicense) {
+      if (_mode == 'premium') {
         await _activatePremiumLicense(code);
       } else {
-        await _activateAccessCode(code);
+        await _activateAccessCode(code, isEmployee: _mode == 'employee');
       }
     } catch (e) {
       setState(() => _error = e.toString());
@@ -126,7 +126,6 @@ class _SetupPageState extends State<SetupPage> {
       setState(() => _error = (lic['error'] as String?) ?? 'Kode lisensi tidak valid');
       return;
     }
-    // Kode lisensi premium harus ditukar menjadi Kode Pemilik untuk sync.
     final reg = await api.syncRegister(code, widget.device);
     if (reg['ok'] != true) {
       setState(() => _error =
@@ -144,15 +143,14 @@ class _SetupPageState extends State<SetupPage> {
     );
   }
 
-  Future<void> _activateAccessCode(String code) async {
+  Future<void> _activateAccessCode(String code, {required bool isEmployee}) async {
     final r = await api.syncRegister(code, widget.device);
     if (r['ok'] != true) {
       final msg = (r['error'] as String?) ?? 'Kode tidak valid';
-      // Petunjuk jika pengguna memasukkan kode lisensi di mode warung/karyawan.
       if (msg.toLowerCase().contains('belum terdaftar untuk lisensi')) {
         setState(() {
           _error =
-              '$msg\n\nJika ini kode lisensi premium, pilih "Lisensi Premium" di atas lalu aktifkan lagi.';
+              '$msg\n\nJika ini kode lisensi premium, pilih opsi "Email atau Kode Premium" di atas lalu coba lagi.';
         });
         return;
       }
@@ -169,80 +167,112 @@ class _SetupPageState extends State<SetupPage> {
     );
   }
 
+  Widget _modeCard({required String value, required IconData icon, required String title, required String desc}) {
+    final selected = _mode == value;
+    return Card(
+      color: selected ? const Color(0xFFE6F2EF) : null,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: selected ? const Color(0xFF0F5C4D) : const Color(0xFFDDDDDD), width: selected ? 1.5 : 1),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: _busy ? null : () => setState(() { _mode = value; _error = null; }),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, color: selected ? const Color(0xFF0F5C4D) : Colors.grey[700]),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: selected ? const Color(0xFF0F5C4D) : Colors.black87)),
+                    const SizedBox(height: 2),
+                    Text(desc, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                  ],
+                ),
+              ),
+              if (selected) const Icon(Icons.check_circle, color: Color(0xFF0F5C4D), size: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isPremium = _mode == 'premium';
+    final isEmployee = _mode == 'employee';
+    final label = isPremium ? 'Email atau Kode Premium' : (isEmployee ? 'Kode Karyawan' : 'Kode Akses Pemilik/Warung');
+    final icon = isPremium ? Icons.workspace_premium : (isEmployee ? Icons.badge_outlined : Icons.storefront);
     return Scaffold(
       appBar: AppBar(title: const Text('Aktivasi Omset-WarMad')),
-      body: Padding(
+      body: ListView(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Icon(Icons.storefront, size: 72, color: Color(0xFF0F5C4D)),
-            const SizedBox(height: 16),
-            const Text(
-              'Aktifkan perangkat',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
+        children: [
+          const Icon(Icons.storefront, size: 72, color: Color(0xFF0F5C4D)),
+          const SizedBox(height: 16),
+          const Text(
+            'Aktifkan perangkat',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Pilih jenis akses Anda untuk melanjutkan.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 20),
+          _modeCard(
+            value: 'premium',
+            icon: Icons.workspace_premium,
+            title: 'Email atau Kode Premium',
+            desc: 'Untuk pengguna yang sudah memiliki lisensi premium. Masukkan kode premium untuk mengaktifkan perangkat.',
+          ),
+          _modeCard(
+            value: 'owner',
+            icon: Icons.storefront_outlined,
+            title: 'Pemilik Warung',
+            desc: 'Untuk pemilik warung. Bisa mulai gratis, lalu aktifkan lisensi premium kapan saja dari Pengaturan.',
+          ),
+          _modeCard(
+            value: 'employee',
+            icon: Icons.badge_outlined,
+            title: 'Karyawan',
+            desc: 'Untuk karyawan yang sudah mendapat kode dari pemilik warung. Bisa juga masuk lewat tautan yang dibagikan pemilik (jika tersedia).',
+          ),
+          const SizedBox(height: 20),
+          TextField(
+            controller: _controller,
+            textCapitalization: TextCapitalization.characters,
+            decoration: InputDecoration(
+              labelText: label,
+              border: const OutlineInputBorder(),
+              prefixIcon: Icon(icon),
             ),
-            const SizedBox(height: 8),
-            Text(
-              _premiumLicense
-                  ? 'Masukkan kode lisensi premium Anda. Perangkat akan didaftarkan lalu disiapkan untuk sinkronisasi.'
-                  : 'Masukkan kode akses warung/pemilik atau kode karyawan yang diberikan pemilik.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 20),
-            SegmentedButton<bool>(
-              segments: const [
-                ButtonSegment<bool>(
-                  value: false,
-                  label: Text('Kode Warung'),
-                  icon: Icon(Icons.key),
-                ),
-                ButtonSegment<bool>(
-                  value: true,
-                  label: Text('Lisensi Premium'),
-                  icon: Icon(Icons.workspace_premium),
-                ),
-              ],
-              selected: {_premiumLicense},
-              onSelectionChanged: _busy
-                  ? null
-                  : (s) => setState(() {
-                        _premiumLicense = s.first;
-                        _error = null;
-                      }),
-            ),
-            const SizedBox(height: 20),
-            TextField(
-              controller: _controller,
-              textCapitalization: TextCapitalization.characters,
-              decoration: InputDecoration(
-                labelText: _premiumLicense ? 'Kode lisensi premium' : 'Kode akses',
-                border: const OutlineInputBorder(),
-                prefixIcon: Icon(_premiumLicense ? Icons.workspace_premium : Icons.key),
-              ),
-              onSubmitted: (_) => _busy ? null : _activate(),
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              Text(_error!, style: const TextStyle(color: Colors.red)),
-            ],
-            const SizedBox(height: 20),
-            FilledButton(
-              onPressed: _busy ? null : _activate,
-              child: _busy
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Aktifkan'),
-            ),
+            onSubmitted: (_) => _busy ? null : _activate(),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: const TextStyle(color: Colors.red)),
           ],
-        ),
+          const SizedBox(height: 20),
+          FilledButton(
+            onPressed: _busy ? null : _activate,
+            child: _busy
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Aktifkan'),
+          ),
+        ],
       ),
     );
   }
@@ -639,10 +669,14 @@ class _HomePageState extends State<HomePage> {
               subtitle: Text(
                 st.lastSync == null
                     ? 'Belum pernah sinkron'
-                    : 'Sinkron terakhir: ${st.lastSync!.toLocal()}',
+                    : () {
+                        final t = st.lastSync!.toLocal();
+                        String p2(int n) => n.toString().padLeft(2, '0');
+                        return 'Sinkron terakhir: ${t.year}-${p2(t.month)}-${p2(t.day)} ${p2(t.hour)}:${p2(t.minute)}';
+                      }(),
               ),
               trailing: st.premium
-                  ? Text('rev ${st.rev ?? '-'}')
+                  ? null
                   : TextButton(
                       onPressed: _busy ? null : _showPremiumDialog,
                       child: const Text('Aktifkan Lisensi Premium'),
@@ -1686,21 +1720,21 @@ class _InputTabState extends State<InputTab> {
                     width: double.infinity,
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF3F7F6),
+                      color: const Color(0xFFFFF8E1),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFB7D1CB)),
+                      border: Border.all(color: const Color(0xFFE6C96A)),
                     ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(Icons.info_outline, color: Color(0xFF0F5C4D)),
+                        const Icon(Icons.info_outline, color: Color(0xFF8A6D00)),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const Text('Tanggal ini sudah memiliki catatan',
-                                  style: TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF0F5C4D))),
+                                  style: TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF8A6D00))),
                               const SizedBox(height: 2),
                               Text('Omset tercatat ${widget.rupiah(existing.first.omset)}. Anda bisa mengedit catatan yang sudah ada.',
                                   style: const TextStyle(fontSize: 13, color: Colors.black87)),
@@ -1710,7 +1744,7 @@ class _InputTabState extends State<InputTab> {
                                   onPressed: () => _loadForEdit(w, existing.first),
                                   icon: const Icon(Icons.edit_outlined, size: 18),
                                   label: const Text('Edit Catatan'),
-                                  style: TextButton.styleFrom(padding: EdgeInsets.zero),
+                                  style: TextButton.styleFrom(foregroundColor: Color(0xFF8A6D00), padding: EdgeInsets.zero),
                                 ),
                               ),
                             ],
